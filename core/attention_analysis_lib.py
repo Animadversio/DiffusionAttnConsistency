@@ -1,6 +1,21 @@
 import torch
 from typing import Optional
 
+__all__ = [
+    'compute_entropy_last_dim',
+    'attention_maps_to_spatial_maps',
+    'infer_spatial_shape',
+    'token_distance_matrix',
+    'average_attention_distance',
+    'local_attention_score',
+    'top_k_attention_score',
+    'attention_spatial_variance',
+    'attention_spatial_total_variation',
+    'plot_attention_layer_head_heatmaps',
+    'plot_single_attn_map',
+    "visualize_attn_maps",
+]
+
 
 # Statistics of the attention maps
 def compute_entropy_last_dim(p: torch.Tensor, dim: int = -1) -> torch.Tensor:
@@ -61,7 +76,7 @@ def average_attention_distance(attn_maps: torch.Tensor, shape: Optional[tuple] =
     return (attn_maps * dist_matrix).sum(dim=-1)
 
 
-def local_attention_score(attn_maps: torch.Tensor, shape: Optional[tuple] = None, dist_type: str = "L2", threshold: float = 0.0) -> torch.Tensor:
+def local_attention_score(attn_maps: torch.Tensor, shape: Optional[tuple] = None, dist_type: str = "L2", threshold: float = 2.0) -> torch.Tensor:
     """
     Compute the local attention score of the attention maps.
     """
@@ -79,6 +94,26 @@ def top_k_attention_score(attn_maps: torch.Tensor, k: int = 10, dim: int = -1) -
     Compute the sum of top k attention score of the attention maps.
     """
     return attn_maps.topk(k, dim=dim).values.sum(dim=dim)
+
+
+def attention_spatial_variance(attn_maps: torch.Tensor, shape: Optional[tuple] = None) -> torch.Tensor:
+    """
+    Compute the spatial variance of the attention maps.
+    """
+    if shape is None:
+        shape = infer_spatial_shape(attn_maps.shape[-1]) # (H, W)
+    attn_maps_spatial = attention_maps_to_spatial_maps(attn_maps, shape)
+    return weighted_variance_2d(attn_maps_spatial)
+
+
+def attention_spatial_total_variation(attn_maps: torch.Tensor, shape: Optional[tuple] = None) -> torch.Tensor:
+    """
+    Compute the spatial total variation of the attention maps.
+    """
+    if shape is None:
+        shape = infer_spatial_shape(attn_maps.shape[-1]) # (H, W)
+    attn_maps_spatial = attention_maps_to_spatial_maps(attn_maps, shape)
+    return tv2d(attn_maps_spatial)
 
 
 def weighted_variance_2d(A: torch.Tensor) -> torch.Tensor:
@@ -228,3 +263,93 @@ def visualize_attn_maps_old(attn_maps_stacked, layer_idx, step_idx, sample_idx, 
     plt.tight_layout()
     return fig
 
+
+def visualize_attn_maps(
+    attn_maps, 
+    layer_idx, step_idx, sample_idx, head_idx, token_idx, 
+    row_dim='layer', 
+    col_dim='head',
+    map_shape=(16,16),
+    use_heatmap=False,
+    cbar=True,
+):
+    """
+    attn_maps: shape (L, S, N, H, T, T)
+    fixed: dict of the two dims you want to hold constant, e.g. {'step':3, 'head':1}
+    row_dim, col_dim: the two dims you want to vary along rows and columns of subplots
+    """
+    # possible dims
+    fixed = {}
+    if layer_idx is not None:
+        fixed['layer'] = layer_idx
+    if step_idx is not None:
+        fixed['step'] = step_idx
+    if sample_idx is not None:
+        fixed['sample'] = sample_idx
+    if head_idx is not None:
+        fixed['head'] = head_idx
+    if token_idx is not None:
+        fixed['token'] = token_idx
+    dims = {
+        'layer': attn_maps.shape[0],
+        'step' : attn_maps.shape[1],
+        'sample': attn_maps.shape[2],
+        'head' : attn_maps.shape[3],
+        'token': attn_maps.shape[4],
+         None: 1 # when some dim is None, it means it's singleton
+    }
+    non_fixed_dims = set(dims) - set(fixed) - {None}
+    assert row_dim in dims and col_dim in dims
+    if len(non_fixed_dims) == 0:
+        row_dim = None
+        col_dim = None
+    elif len(non_fixed_dims) == 1:
+        col_dim = non_fixed_dims.pop()
+        row_dim = None
+    elif len(non_fixed_dims) == 2:
+        if row_dim is None or col_dim is None:
+            row_dim = non_fixed_dims.pop()
+            col_dim = non_fixed_dims.pop()
+        else:
+            assert row_dim in non_fixed_dims and col_dim in non_fixed_dims
+    else:
+        raise ValueError(f"non_fixed_dims must have length 0, 1, or 2, got {non_fixed_dims}")
+    # sanity check
+    row_vals = range(dims[row_dim])
+    col_vals = range(dims[col_dim])
+
+    fig, axs = plt.subplots(
+        len(row_vals), len(col_vals),
+        figsize=(3*len(col_vals), 3*len(row_vals)),
+        sharex=True, sharey=True, squeeze=False
+    )
+
+    # make sure axs is 2D
+    axs = np.atleast_2d(axs)
+
+    for i, r in enumerate(row_vals):
+        for j, c in enumerate(col_vals):
+            idxs = {
+                row_dim: r,
+                col_dim: c,
+                **fixed
+            }
+            # pull out the attention map slice
+            attn_map = attn_maps[
+                idxs['layer'],
+                idxs['step'],
+                sample_idx,
+                idxs['head'],
+                token_idx,
+                :
+            ]
+            ax = axs[i, j]
+            plot_single_attn_map(
+                ax, attn_map, token_idx,
+                map_shape, use_heatmap, cbar
+            )
+            ax.set_title(", ".join([f"{k}={v}" for k,v in [(row_dim, r), (col_dim, c)] if k is not None]))
+            # ax.set_title(f"{row_dim}={r}, {col_dim}={c}")
+    plt.suptitle(", ".join([f"{k}={v}" for k, v in fixed.items()]))
+    # plt.tight_layout()
+    return fig
