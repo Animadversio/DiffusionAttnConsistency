@@ -14,6 +14,7 @@ __all__ = [
     'plot_attention_layer_head_heatmaps',
     'plot_single_attn_map',
     "visualize_attn_maps",
+    "toggle_fused_attn",
 ]
 
 
@@ -169,7 +170,7 @@ def plot_attention_layer_head_heatmaps(score_tensor, title_str, figsize=(12, 8),
         figsize: Figure size tuple
         num_heads: Number of attention heads to plot
     """
-    figh, axs = plt.subplots(2, 3, figsize=figsize, sharex=True, sharey=True)
+    figh, axs = plt.subplots(num_heads // 3, 3, figsize=figsize, sharex=True, sharey=True)
     axs = axs.flatten()
     num_heads = score_tensor.shape[-1]
     for head_idx in range(num_heads):
@@ -186,6 +187,7 @@ def plot_attention_layer_head_heatmaps(score_tensor, title_str, figsize=(12, 8),
     plt.suptitle(title_str+(f" | sample_id = {sample_idx}" if sample_idx is not None else " | avg over all samples"))
     plt.tight_layout()
     plt.show()
+    return figh
 
 
 def plot_single_attn_map(ax, attn_map, token_idx=None, map_shape=(16, 16), use_heatmap=False, cbar=True):
@@ -353,3 +355,12 @@ def visualize_attn_maps(
     plt.suptitle(", ".join([f"{k}={v}" for k, v in fixed.items()]))
     # plt.tight_layout()
     return fig
+
+
+
+def toggle_fused_attn(model, fused_attn=True):
+    for block in model.blocks:
+        block.attn.fused_attn = fused_attn
+    print(f"Fused attn turned {fused_attn}")
+    return model
+
