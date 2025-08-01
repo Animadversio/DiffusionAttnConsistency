@@ -72,6 +72,12 @@ def sample_ensuring_uniqueness(N, sample_func):
     
     return np.array(collected_samples)
 
+import torch as th
+def round_to_pos_neg_one(x, eps = 1e-2):
+    result = th.full_like(x, float('nan'))
+    result[th.abs(x - 1) < eps] = 1.0
+    result[th.abs(x - (-1)) < eps] = -1
+    return result
 
 if __name__ == "__main__":
     # Example:
