@@ -188,7 +188,7 @@ def generate_ckpt_step_list(max_steps, num_ckpts=100, sequence="geomspace") -> L
 
 def parse_args():
     parser = argparse.ArgumentParser(description="DiT Learning Curve Experiment")
-    parser.add_argument("--dataset_name", type=str, default="ffhq-32x32", help="Dataset name")
+    # parser.add_argument("--dataset_name", type=str, default="ffhq-32x32", help="Dataset name")
     parser.add_argument("--exp_name", type=str, default="FFHQ32_DiT_CNN_EDM", help="Experiment name")
     parser.add_argument("--loss_type", type=str, default="DSM", help="Loss type (DSM, ESM)")
     # training hyper-parameters
@@ -271,7 +271,7 @@ num_ckpts = args.num_ckpts
 ckpt_step_list = generate_ckpt_step_list(nsteps, num_ckpts=num_ckpts, sequence="geomspace")
 if args.record_step_range is None or len(args.record_step_range) == 0:
     print("using default record step range")
-    ranges = [(0, 10, 1), (10, 50, 2), (50, 100, 4), (100, 500, 8), (500, 2500, 16), (2500, 5000, 32), (5000, 10000, 128), (10000, 50000, 256), (50000, 100000, 512), (100000, 500000, 1024)]
+    ranges = [(0, 10, 1), (10, 50, 2), (50, 100, 4), (100, 500, 8), (500, 2500, 16), (2500, 5000, 32), (5000, 10000, 128), (10000, 50000, 256), (50000, 100000, 512), (100000, 1000000, 1024)]
     record_step_range = ranges
 else:
     record_step_range = args.record_step_range
@@ -326,7 +326,7 @@ def sampling_eval_callback_fn(epoch, loss, model):
     even_parity_num = th.sum(sample_eval_parity == 0).item()
     odd_parity_num = th.sum(sample_eval_parity == 1).item()
     nan_num = th.sum(th.isnan(sample_eval_parity)).item()
-    print(f"Even parity: {even_parity_num}, Odd parity: {odd_parity_num} nan: {nan_num}| total: {sample_num}")
+    print(f"epoch: {epoch:06d} | Even parity: {even_parity_num}, Odd parity: {odd_parity_num} nan: {nan_num}| total: {sample_num}")
     
 
 
