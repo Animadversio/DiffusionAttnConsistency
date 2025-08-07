@@ -4,7 +4,7 @@
 #SBATCH -c 16               # Number of cores (-c)
 #SBATCH --mem=75G           # Memory pool for all cores (see also --mem-per-cpu)
 #SBATCH --gres=gpu:1
-#SBATCH --array=49-60%12
+#SBATCH --array=61-72%12
 #SBATCH --account=kempner_binxuwang_lab
 #SBATCH -o DiT_edm_learn_parity_%A_%a.out  # File to which STDOUT will be written, %j inserts jobid
 #SBATCH -e DiT_edm_learn_parity_%A_%a.err  # File to which STDERR will be written, %j inserts jobid
@@ -71,7 +71,19 @@ param_list=\
 --sample_num 1024  --sample_len 36 --group_size 4  --parity 0  --exp_name DiT_mini_parity_N1024_D36_G4_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
 --sample_num 1024  --sample_len 36 --group_size 6  --parity 0  --exp_name DiT_mini_parity_N1024_D36_G6_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
 --sample_num 1024  --sample_len 36 --group_size 12  --parity 0 --exp_name DiT_mini_parity_N1024_D36_G12_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
---sample_num 1024  --sample_len 36 --group_size 36  --parity 0 --exp_name DiT_mini_parity_N1024_D36_G36_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 1024  --sample_len 36 --group_size 36  --parity 0 --exp_name DiT_mini_parity_N1024_D36_G36_even  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 8192  --sample_len 36 --group_size 2  --parity 0  --exp_name DiT_mini_parity_N8192_D36_G2_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 8192  --sample_len 36 --group_size 3  --parity 0  --exp_name DiT_mini_parity_N8192_D36_G3_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 8192  --sample_len 36 --group_size 9  --parity 0  --exp_name DiT_mini_parity_N8192_D36_G9_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 8192  --sample_len 36 --group_size 18  --parity 0 --exp_name DiT_mini_parity_N8192_D36_G18_even  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 2048  --sample_len 36 --group_size 2  --parity 0  --exp_name DiT_mini_parity_N2048_D36_G2_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 2048  --sample_len 36 --group_size 3  --parity 0  --exp_name DiT_mini_parity_N2048_D36_G3_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 2048  --sample_len 36 --group_size 9  --parity 0  --exp_name DiT_mini_parity_N2048_D36_G9_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 2048  --sample_len 36 --group_size 18  --parity 0 --exp_name DiT_mini_parity_N2048_D36_G18_even  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 1024  --sample_len 36 --group_size 2  --parity 0  --exp_name DiT_mini_parity_N1024_D36_G2_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 1024  --sample_len 36 --group_size 3  --parity 0  --exp_name DiT_mini_parity_N1024_D36_G3_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 1024  --sample_len 36 --group_size 9  --parity 0  --exp_name DiT_mini_parity_N1024_D36_G9_even   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
+--sample_num 1024  --sample_len 36 --group_size 18  --parity 0 --exp_name DiT_mini_parity_N1024_D36_G18_even  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000 
 '
 
 export param_name="$(echo "$param_list" | head -n $SLURM_ARRAY_TASK_ID | tail -1)"
