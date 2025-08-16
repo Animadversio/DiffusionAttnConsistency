@@ -4,7 +4,7 @@
 #SBATCH -c 16               # Number of cores (-c)
 #SBATCH --mem=75G           # Memory pool for all cores (see also --mem-per-cpu)
 #SBATCH --gres=gpu:1
-#SBATCH --array=17-32%12
+#SBATCH --array=33-40%8
 #SBATCH --account=kempner_binxuwang_lab
 #SBATCH -o GPT_learn_parity_%A_%a.out  # File to which STDOUT will be written, %j inserts jobid
 #SBATCH -e GPT_learn_parity_%A_%a.err  # File to which STDERR will be written, %j inserts jobid
@@ -44,6 +44,14 @@ param_list=\
 --sample_num 16384 --sample_len 36 --group_size 12 --parity 0 --exp_name GPT_mini_parity_N16384_D36_G12_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
 --sample_num 16384 --sample_len 36 --group_size 18 --parity 0 --exp_name GPT_mini_parity_N16384_D36_G18_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
 --sample_num 16384 --sample_len 36 --group_size 36 --parity 0 --exp_name GPT_mini_parity_N16384_D36_G36_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
+--sample_num 32768 --sample_len 36 --group_size 2  --parity 0 --exp_name GPT_mini_parity_N32768_D36_G2_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
+--sample_num 32768 --sample_len 36 --group_size 3  --parity 0 --exp_name GPT_mini_parity_N32768_D36_G3_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
+--sample_num 32768 --sample_len 36 --group_size 4  --parity 0 --exp_name GPT_mini_parity_N32768_D36_G4_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
+--sample_num 32768 --sample_len 36 --group_size 6  --parity 0 --exp_name GPT_mini_parity_N32768_D36_G6_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
+--sample_num 32768 --sample_len 36 --group_size 9  --parity 0 --exp_name GPT_mini_parity_N32768_D36_G9_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
+--sample_num 32768 --sample_len 36 --group_size 12 --parity 0 --exp_name GPT_mini_parity_N32768_D36_G12_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
+--sample_num 32768 --sample_len 36 --group_size 18 --parity 0 --exp_name GPT_mini_parity_N32768_D36_G18_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
+--sample_num 32768 --sample_len 36 --group_size 36 --parity 0 --exp_name GPT_mini_parity_N32768_D36_G36_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
 '
 # --sample_num 8192  --sample_len 36 --group_size 2  --parity 0  --exp_name GPT_mini_parity_N8192_D36_G2_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
 # --sample_num 8192  --sample_len 36 --group_size 3  --parity 0  --exp_name GPT_mini_parity_N8192_D36_G3_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
