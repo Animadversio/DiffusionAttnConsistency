@@ -24,6 +24,7 @@ from core.diffusion_esm_edm_lib import EDMDeltaGMMScoreLoss
 from core.DiT_model_lib import *
 from core.exact_k_lib import sample_exact_k_dataset, exact_k_check, ones_count, round_to_pos_neg_one
 from circuit_toolkit.plot_utils import saveallforms, to_imgrid, show_imgrid
+from torch.utils.tensorboard import SummaryWriter
 
 
 def get_device():
@@ -157,6 +158,7 @@ ckpt_dir = f"{savedir}/ckpts"
 os.makedirs(savedir, exist_ok=True)
 os.makedirs(sample_dir, exist_ok=True)
 os.makedirs(ckpt_dir, exist_ok=True)
+writer = SummaryWriter(log_dir=f"{savedir}/tensorboard")
 
 # %%
 loss_store = {}
@@ -179,26 +181,55 @@ def sampling_eval_callback_fn(epoch, loss, model):
     mtg = to_imgrid(((x_out.cpu()[:64] + 1) / 2).clamp(0, 1), nrow=8, padding=1)
     mtg.save(f"{sample_dir}/samples_epoch_{epoch:06d}.png")
 
-    sample_tsr_int = round_to_pos_neg_one(x_out, eps=1e-1)
-    sample_flat = sample_tsr_int.flatten(1).cpu().numpy()
+    # Invalid sample ratios at two eps thresholds
+    sample_int_1e1 = round_to_pos_neg_one(x_out, eps=1e-1)
+    nan_mask_1e1 = th.isnan(sample_int_1e1.flatten(1)).any(dim=1)
+    nan_ratio_1e1 = nan_mask_1e1.float().mean().item()
 
-    # Count invalid (NaN) samples
+    sample_int_1e2 = round_to_pos_neg_one(x_out, eps=1e-2)
+    nan_mask_1e2 = th.isnan(sample_int_1e2.flatten(1)).any(dim=1)
+    nan_ratio_1e2 = nan_mask_1e2.float().mean().item()
+
+    # Use eps=1e-1 for further evaluation
+    sample_flat = sample_int_1e1.flatten(1).cpu().numpy()
     nan_mask = np.isnan(sample_flat).any(axis=1)
     nan_num = int(nan_mask.sum())
 
-    # Evaluate exact-K correctness (on valid samples only)
+    # Evaluate exact-K correctness on valid samples
     valid_flat = sample_flat[~nan_mask]
     if len(valid_flat) > 0:
         k_correct = exact_k_check(valid_flat, k_ones)
         k_correct_num = int(k_correct.sum())
+        k_correct_ratio = k_correct_num / len(valid_flat)
         ones_counts = ones_count(valid_flat)
         mean_ones = float(ones_counts.mean())
     else:
         k_correct_num = 0
+        k_correct_ratio = 0.0
+        ones_counts = np.array([0])
         mean_ones = float('nan')
 
+    # Memorization: compare generated samples to precomputed train codes
+    if len(valid_flat) > 0:
+        gen_bits  = th.from_numpy((valid_flat > 0).astype(np.int64))
+        gen_codes = (gen_bits * _mem_weights).sum(dim=1)
+        mem_ratio = th.isin(gen_codes, _train_codes).float().mean().item()
+    else:
+        mem_ratio = 0.0
+
     print(f"epoch: {epoch:06d} | exact-K correct: {k_correct_num}/{eval_sample_size - nan_num} valid "
-          f"| mean ones: {mean_ones:.2f} (target K={k_ones}) | nan: {nan_num}")
+          f"({k_correct_ratio:.3f}) | mem: {mem_ratio:.3f} | mean ones: {mean_ones:.2f} "
+          f"(target K={k_ones}) | nan: {nan_num}")
+
+    # TensorBoard logging
+    writer.add_scalar("train/loss",              loss,            epoch)
+    writer.add_scalar("eval/k_correct_ratio",    k_correct_ratio, epoch)
+    writer.add_scalar("eval/sample_mem_ratio",   mem_ratio,       epoch)
+    writer.add_scalar("eval/nan_ratio_eps_1e-1", nan_ratio_1e1,   epoch)
+    writer.add_scalar("eval/nan_ratio_eps_1e-2", nan_ratio_1e2,   epoch)
+    writer.add_scalar("eval/mean_ones",          mean_ones,       epoch)
+    writer.add_histogram("eval/ones_count_dist",
+                         th.from_numpy(ones_counts.astype(np.int32)), epoch)
 
 
 device = get_device()
@@ -211,6 +242,12 @@ print(dataset_name, "dataset")
 Xtsr = torch.from_numpy(x).float()
 Xtsr = Xtsr.view(sample_num, imgchannels, imgsize, imgsize)
 th.save(Xtsr, f"{savedir}/training_data_tsr.pt")
+
+# Precompute train sample codes once for fast memorization check in callback
+_mem_weights = 1 << th.arange(sample_len, dtype=th.long)
+_train_bits  = (Xtsr.flatten(1) > 0).long().cpu()
+_train_codes = (_train_bits * _mem_weights).sum(dim=1).unique()
+
 sigma_data = 1.0
 pnts = Xtsr.view(Xtsr.shape[0], -1)
 imgshape = Xtsr.shape[1:]
@@ -256,4 +293,5 @@ x_out, x_traj, x0hat_traj, t_steps = edm_sampler(model_precd, noise_init,
                 num_steps=40, sigma_min=0.002, sigma_max=80, rho=7, return_traj=True)
 mtg = to_imgrid(((x_out.cpu()[:]+1)/2).clamp(0, 1), nrow=8, padding=1)
 mtg.save(f"{savedir}/learned_samples_final.png")
+writer.close()
 # %%
