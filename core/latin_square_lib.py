@@ -227,6 +227,120 @@ def snap_to_integer(x_cont, n, eps=0.15):
 
 
 # ---------------------------------------------------------------------------
+# One-hot encoding / decoding
+# ---------------------------------------------------------------------------
+
+def int_to_onehot(ls_int_flat, n, active=1.0, inactive=-1.0):
+    """
+    Convert integer-encoded flat Latin square to one-hot encoding.
+
+    Each cell value v ∈ {0,...,n-1} becomes a length-n vector with
+    one active entry (+1) and n-1 inactive entries (-1), matching
+    the diffusion convention of binary {-1, +1}.
+
+    Parameters
+    ----------
+    ls_int_flat : np.ndarray of shape (N, n²) or (n²,), integer
+    n           : int
+    active      : float, value for the active symbol (default +1.0)
+    inactive    : float, value for inactive symbols (default -1.0)
+
+    Returns
+    -------
+    np.ndarray of shape (N, n, n²) or (n, n²)
+      axis -2 is the symbol dimension (one-hot), axis -1 is the cell index.
+      Stored channels-first for use as (N, C=n, H=n, W=n) image tensors
+      after reshaping: result.reshape(N, n, n, n).
+
+    Example (n=3, one cell):
+      value=2 → [-1, -1, +1]  (index 2 is active)
+    """
+    was_1d = ls_int_flat.ndim == 1
+    x = ls_int_flat[None] if was_1d else ls_int_flat   # (N, n²)
+    N, D = x.shape
+    oh = np.full((N, n, D), inactive, dtype=np.float32)
+    rows = np.arange(N)[:, None]          # (N, 1)
+    cols = np.arange(D)[None, :]          # (1, D)
+    oh[rows, x, cols] = active            # set active symbol
+    return oh[0] if was_1d else oh        # (N, n, n²) or (n, n²)
+
+
+def onehot_to_int(ls_onehot, n, eps=0.3):
+    """
+    Convert one-hot-encoded Latin square back to integer encoding.
+
+    Takes argmax along the symbol axis. Entries where the max is not
+    close to `active` (i.e., all channels are ambiguous) are marked NaN.
+
+    Parameters
+    ----------
+    ls_onehot : np.ndarray of shape (N, n, n²) or (n, n²), float
+    n         : int
+    eps       : float, entries whose max channel value < (active - eps) are NaN
+
+    Returns
+    -------
+    np.ndarray of shape (N, n²) or (n²,), float (NaN where ambiguous)
+    """
+    was_2d = ls_onehot.ndim == 2
+    oh = ls_onehot[None] if was_2d else ls_onehot   # (N, n, n²)
+    # argmax along symbol axis → integer index
+    int_vals = oh.argmax(axis=1).astype(float)       # (N, n²)
+    # mask where the maximum activation is too low (not clearly one-hot)
+    max_act = oh.max(axis=1)                         # (N, n²)
+    int_vals[max_act < (1.0 - eps)] = np.nan
+    return int_vals[0] if was_2d else int_vals
+
+
+def onehot_to_scalar(ls_onehot, n, eps=0.3):
+    """
+    Convert one-hot encoding directly to scalar normalized encoding.
+    Convenience wrapper: onehot → integer → scalar float in [-1, +1].
+
+    Parameters
+    ----------
+    ls_onehot : np.ndarray of shape (N, n, n²), float
+    n         : int
+    eps       : float, ambiguity threshold for argmax
+
+    Returns
+    -------
+    np.ndarray of shape (N, n²), float in [-1, +1] (NaN where ambiguous)
+    """
+    int_vals = onehot_to_int(ls_onehot, n, eps=eps)   # (N, n²), may have NaN
+    valid_mask = ~np.isnan(int_vals)
+    result = np.full_like(int_vals, np.nan)
+    result[valid_mask] = encode_latin_square(int_vals[valid_mask].astype(int), n)
+    return result
+
+
+def scalar_to_onehot(ls_scalar, n, snap_eps=0.15, active=1.0, inactive=-1.0):
+    """
+    Convert scalar normalized encoding to one-hot encoding.
+    Snaps continuous floats to nearest integer first.
+
+    Parameters
+    ----------
+    ls_scalar : np.ndarray of shape (N, n²), float in ~[-1, +1]
+    n         : int
+    snap_eps  : float, snapping tolerance
+    active    : float
+    inactive  : float
+
+    Returns
+    -------
+    np.ndarray of shape (N, n, n²), float (NaN channel for failed snaps)
+    """
+    int_vals = snap_to_integer(ls_scalar, n, eps=snap_eps)  # (N, n²), NaN where bad
+    nan_mask = np.isnan(int_vals)                            # (N, n²)
+    int_clean = np.where(nan_mask, 0, int_vals).astype(int) # (N, n²) with 0 placeholder
+    oh = int_to_onehot(int_clean, n, active=active, inactive=inactive)  # (N, n, n²)
+    # zero out channels for cells that failed snapping
+    oh[nan_mask[:, None, :].repeat(n, axis=1).reshape(oh.shape)] = np.nan
+    return oh
+
+
+# ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
 
@@ -291,6 +405,57 @@ def evaluate_latin_square_samples(x_flat_cont, n, eps=0.15):
     nan_ratio = float(nan_mask.mean())
 
     valid_int = x_int[~nan_mask].astype(int)
+    M = len(valid_int)
+
+    if M == 0:
+        return dict(nan_ratio=nan_ratio, row_valid_ratio=0.0,
+                    col_valid_ratio=0.0, full_valid_ratio=0.0,
+                    valid_int=valid_int)
+
+    row_valid, col_valid = check_latin_square_batch(valid_int, n)
+    full_valid = row_valid & col_valid
+
+    return dict(
+        nan_ratio=nan_ratio,
+        row_valid_ratio=float(row_valid.mean()),
+        col_valid_ratio=float(col_valid.mean()),
+        full_valid_ratio=float(full_valid.mean()),
+        valid_int=valid_int,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Batch evaluation — one-hot encoding
+# ---------------------------------------------------------------------------
+
+def evaluate_latin_square_onehot_samples(x_onehot, n, eps=0.3):
+    """
+    Evaluate a batch of one-hot-encoded samples from the diffusion model.
+
+    Parameters
+    ----------
+    x_onehot : np.ndarray of shape (N, n, n²), continuous floats ≈ {-1, +1}
+               (channel axis = symbol axis)
+    n        : int
+    eps      : float, a cell is "ambiguous" if max channel < (1.0 - eps).
+               Use eps=0.3 (permissive) or eps=0.1 (strict).
+
+    Returns
+    -------
+    dict with keys:
+        nan_ratio        — fraction of samples where ANY cell is ambiguous
+        row_valid_ratio  — fraction (of unambiguous) where all rows are valid
+        col_valid_ratio  — fraction (of unambiguous) where all cols are valid
+        full_valid_ratio — fraction satisfying BOTH
+        valid_int        — np.ndarray (M, n²) int, decoded valid samples
+    """
+    N = len(x_onehot)
+    int_vals = onehot_to_int(x_onehot, n, eps=eps)   # (N, n²), NaN where ambiguous
+
+    nan_mask = np.isnan(int_vals).any(axis=1)
+    nan_ratio = float(nan_mask.mean())
+
+    valid_int = int_vals[~nan_mask].astype(int)
     M = len(valid_int)
 
     if M == 0:

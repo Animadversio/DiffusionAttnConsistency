@@ -24,8 +24,10 @@ from core.DiT_model_lib import *
 from core.latin_square_lib import (
     sample_latin_square_dataset,
     encode_latin_square,
+    int_to_onehot,
     snap_to_integer,
     evaluate_latin_square_samples,
+    evaluate_latin_square_onehot_samples,
     compute_memorization,
     valid_set_size,
     expected_memorization_ratio,
@@ -105,7 +107,10 @@ def parse_args():
     parser.add_argument("--eval_batch_size", type=int, default=1024, help="Evaluation batch size")
     parser.add_argument("--eval_sampling_steps", type=int, default=35, help="Evaluation sampling steps")
     parser.add_argument("--eval_fix_noise_seed", action="store_true", help="Evaluation fix noise seed")
-    parser.add_argument("--snap_eps", type=float, default=0.15, help="Snapping tolerance for integer decoding")
+    parser.add_argument("--encoding", type=str, default="scalar", choices=["scalar", "onehot"],
+                        help="Encoding: 'scalar' (1-channel normalized int) or 'onehot' (n-channel binary {-1,+1})")
+    parser.add_argument("--snap_eps", type=float, default=0.15, help="Snapping tolerance for scalar decoding")
+    parser.add_argument("--onehot_eps", type=float, default=0.3, help="Ambiguity threshold for one-hot decoding (max channel must exceed 1-eps)")
     parser.add_argument("--record_frequency", type=int, default=0, help="Evaluation sample frequency")
     # dataset hyper-parameters
     parser.add_argument("--sample_num", type=int, default=4096, help="Number of training samples")
@@ -136,7 +141,9 @@ eval_sample_size = args.eval_sample_size
 eval_batch_size = args.eval_batch_size
 eval_sampling_steps = args.eval_sampling_steps
 eval_fix_noise_seed = args.eval_fix_noise_seed
+encoding = args.encoding
 snap_eps = args.snap_eps
+onehot_eps = args.onehot_eps
 record_frequency = args.record_frequency
 save_ckpts = args.save_ckpts
 num_ckpts = args.num_ckpts
@@ -189,70 +196,83 @@ def sampling_eval_callback_fn(epoch, loss, model):
                                sigma_min=0.002, sigma_max=80, rho=7, return_traj=False)
         x_out_batches.append(x_out_i)
 
-    x_out = torch.cat(x_out_batches, dim=0)   # (eval_sample_size, 1, n_size, n_size)
+    x_out = torch.cat(x_out_batches, dim=0)   # (eval_sample_size, C, n_size, n_size)
     torch.save(x_out, f"{sample_dir}/samples_epoch_{epoch:06d}.pt")
 
-    # Save image grid (normalize to [0,1] for visualization)
-    x_vis = ((x_out.cpu()[:64] - x_out.min()) / (x_out.max() - x_out.min() + 1e-8)).clamp(0, 1)
-    mtg = to_imgrid(x_vis, nrow=8, padding=1)
+    # Save image grid — always visualize as grayscale (1 channel)
+    x_cpu = x_out.cpu()
+    if encoding == "onehot":
+        # argmax over symbol channel → intensity in [0, 1]
+        x_vis = (x_cpu.argmax(dim=1, keepdim=True).float() / (n_size - 1)).clamp(0, 1)
+    else:
+        x_vis = ((x_cpu[:64] + 1) / 2).clamp(0, 1)
+    mtg = to_imgrid(x_vis[:64], nrow=8, padding=1)
     mtg.save(f"{sample_dir}/samples_epoch_{epoch:06d}.png")
 
-    # Snap continuous output to nearest integer values
-    x_flat_cont = x_out.cpu().flatten(1).numpy()  # (N, n²)
+    # --- Encoding-specific decoding & evaluation ---
+    if encoding == "scalar":
+        x_flat_cont = x_cpu.flatten(1).numpy()   # (N, n²) float
+        metrics_perm = evaluate_latin_square_samples(x_flat_cont, n_size, eps=snap_eps)
+        metrics_strict = evaluate_latin_square_samples(x_flat_cont, n_size, eps=snap_eps * 0.1)
+        nan_ratio_perm   = metrics_perm["nan_ratio"]
+        nan_ratio_strict = metrics_strict["nan_ratio"]
+        valid_int = metrics_perm["valid_int"]
+    else:  # onehot
+        x_oh = x_cpu.numpy().reshape(eval_sample_size, n_size, n_size * n_size)  # (N, n, n²)
+        metrics_perm   = evaluate_latin_square_onehot_samples(x_oh, n_size, eps=onehot_eps)
+        metrics_strict = evaluate_latin_square_onehot_samples(x_oh, n_size, eps=onehot_eps * 0.33)
+        nan_ratio_perm   = metrics_perm["nan_ratio"]
+        nan_ratio_strict = metrics_strict["nan_ratio"]
+        valid_int = metrics_perm["valid_int"]
 
-    metrics_1e1 = evaluate_latin_square_samples(x_flat_cont, n_size, eps=1e-1)
-    metrics_1e2 = evaluate_latin_square_samples(x_flat_cont, n_size, eps=1e-2)
-
-    nan_ratio_1e1 = metrics_1e1["nan_ratio"]
-    nan_ratio_1e2 = metrics_1e2["nan_ratio"]
-
-    # Use eps=1e-1 for further eval (more permissive)
-    valid_int = metrics_1e1["valid_int"]   # (M, n²) integer, NaN-free
     M = len(valid_int)
-
     if M > 0:
-        full_valid_ratio = metrics_1e1["full_valid_ratio"]
-        row_valid_ratio  = metrics_1e1["row_valid_ratio"]
-        col_valid_ratio  = metrics_1e1["col_valid_ratio"]
+        full_valid_ratio = metrics_perm["full_valid_ratio"]
+        row_valid_ratio  = metrics_perm["row_valid_ratio"]
+        col_valid_ratio  = metrics_perm["col_valid_ratio"]
         mem_ratio = compute_memorization(_train_int_flat, valid_int)
     else:
-        full_valid_ratio = 0.0
-        row_valid_ratio  = 0.0
-        col_valid_ratio  = 0.0
-        mem_ratio = 0.0
+        full_valid_ratio = row_valid_ratio = col_valid_ratio = mem_ratio = 0.0
 
-    print(f"epoch: {epoch:06d} | full_valid: {M * full_valid_ratio:.0f}/{M} valid snapped "
+    print(f"epoch: {epoch:06d} | [{encoding}] full_valid: {int(M * full_valid_ratio)}/{M} valid "
           f"({full_valid_ratio:.3f}) | row={row_valid_ratio:.3f} col={col_valid_ratio:.3f} "
-          f"| mem={mem_ratio:.4f} | nan_1e1={nan_ratio_1e1:.3f}")
+          f"| mem={mem_ratio:.4f} | nan_perm={nan_ratio_perm:.3f} nan_strict={nan_ratio_strict:.3f}")
 
     # TensorBoard logging
-    writer.add_scalar("train/loss",             loss,             epoch)
-    writer.add_scalar("eval/full_valid_ratio",  full_valid_ratio, epoch)
-    writer.add_scalar("eval/row_valid_ratio",   row_valid_ratio,  epoch)
-    writer.add_scalar("eval/col_valid_ratio",   col_valid_ratio,  epoch)
-    writer.add_scalar("eval/sample_mem_ratio",  mem_ratio,        epoch)
-    writer.add_scalar("eval/nan_ratio_eps_1e-1", nan_ratio_1e1,   epoch)
-    writer.add_scalar("eval/nan_ratio_eps_1e-2", nan_ratio_1e2,   epoch)
+    writer.add_scalar("train/loss",              loss,             epoch)
+    writer.add_scalar("eval/full_valid_ratio",   full_valid_ratio, epoch)
+    writer.add_scalar("eval/row_valid_ratio",    row_valid_ratio,  epoch)
+    writer.add_scalar("eval/col_valid_ratio",    col_valid_ratio,  epoch)
+    writer.add_scalar("eval/sample_mem_ratio",   mem_ratio,        epoch)
+    writer.add_scalar("eval/nan_ratio_permissive", nan_ratio_perm,   epoch)
+    writer.add_scalar("eval/nan_ratio_strict",     nan_ratio_strict, epoch)
 
 
 device = get_device()
 imgsize = n_size
-imgchannels = 1
 
-print(f"Generating Latin square dataset: N={sample_num}, n={n_size}")
-x_int = sample_latin_square_dataset(N=sample_num, n=n_size)      # (N, n²), integer
-x_norm = encode_latin_square(x_int, n_size).astype(np.float32)   # (N, n²), float32 in [-1,+1]
+print(f"Generating Latin square dataset: N={sample_num}, n={n_size}, encoding={encoding}")
+x_int = sample_latin_square_dataset(N=sample_num, n=n_size)   # (N, n²), integer
 
-dataset_name = f"latinSq_n{n_size}_N{sample_num}"
+dataset_name = f"latinSq_n{n_size}_N{sample_num}_{encoding}"
 print(f"{dataset_name} dataset, valid_set_size={valid_set_size(n_size):,}, "
       f"mem_ratio={expected_memorization_ratio(sample_num, n_size):.3e}")
 
-Xtsr = torch.from_numpy(x_norm).float()
-Xtsr = Xtsr.view(sample_num, imgchannels, imgsize, imgsize)
+if encoding == "scalar":
+    # (N, n²) float in [-1, +1], reshaped to (N, 1, n, n)
+    x_encoded = encode_latin_square(x_int, n_size).astype(np.float32)
+    imgchannels = 1
+    Xtsr = torch.from_numpy(x_encoded).view(sample_num, imgchannels, imgsize, imgsize)
+else:  # onehot
+    # (N, n, n²) binary {-1, +1}, reshaped to (N, n, n, n)
+    x_encoded = int_to_onehot(x_int, n_size, active=1.0, inactive=-1.0)  # (N, n, n²)
+    imgchannels = n_size
+    Xtsr = torch.from_numpy(x_encoded).view(sample_num, imgchannels, imgsize, imgsize)
+
 th.save(Xtsr, f"{savedir}/training_data_tsr.pt")
 
-# Precompute training integer codes for fast memorization lookup
-_train_int_flat = x_int   # (N, n²) integer, shape kept for compute_memorization
+# Precompute integer training set for memorization lookup (encoding-agnostic)
+_train_int_flat = x_int   # (N, n²) integer
 
 sigma_data = 1.0
 pnts = Xtsr.view(Xtsr.shape[0], -1)
