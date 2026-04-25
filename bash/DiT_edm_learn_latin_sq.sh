@@ -12,10 +12,10 @@
 
 echo "$SLURM_ARRAY_TASK_ID"
 param_list=\
-'--sample_num  128  --n_size 4  --exp_name DiT_mini_latinSq_n4_N128   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
---sample_num  432  --n_size 4  --exp_name DiT_mini_latinSq_n4_N432   --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
---sample_num 4096  --n_size 5  --exp_name DiT_mini_latinSq_n5_N4096  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
---sample_num 4096  --n_size 6  --exp_name DiT_mini_latinSq_n6_N4096  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
+'--sample_num 4096  --n_size 5  --encoding scalar  --exp_name DiT_mini_latinSq_n5_N4096_scalar  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 5  --encoding onehot  --exp_name DiT_mini_latinSq_n5_N4096_onehot  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --encoding scalar  --exp_name DiT_mini_latinSq_n6_N4096_scalar  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --encoding onehot  --exp_name DiT_mini_latinSq_n6_N4096_onehot  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
 '
 
 export param_name="$(echo "$param_list" | head -n $SLURM_ARRAY_TASK_ID | tail -1)"

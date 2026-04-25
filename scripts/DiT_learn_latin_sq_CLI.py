@@ -326,7 +326,10 @@ x_out, x_traj, x0hat_traj, t_steps = edm_sampler(
     model_precd, noise_init,
     num_steps=40, sigma_min=0.002, sigma_max=80, rho=7, return_traj=True,
 )
-x_vis = ((x_out.cpu() + 1) / 2).clamp(0, 1)
+if encoding == "onehot":
+    x_vis = (x_out.cpu().argmax(dim=1, keepdim=True).float() / (n_size - 1)).clamp(0, 1)
+else:
+    x_vis = ((x_out.cpu() + 1) / 2).clamp(0, 1)
 mtg = to_imgrid(x_vis, nrow=8, padding=1)
 mtg.save(f"{savedir}/learned_samples_final.png")
 writer.close()
