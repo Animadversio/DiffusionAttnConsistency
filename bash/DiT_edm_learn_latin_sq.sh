@@ -23,9 +23,9 @@ param_list=\
 --sample_num 4096  --n_size 6  --encoding onehot  --onehot_type zero_mean  --sigma_data auto  --exp_name DiT_mini_latinSq_n6_N4096_onehot_zeromean_autoSD  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
 --sample_num 4096  --n_size 6  --encoding onehot  --onehot_type zero_one   --sigma_data auto  --exp_name DiT_mini_latinSq_n6_N4096_onehot_zeroone_autoSD   --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
 --sample_num 4096  --n_size 6  --rule row_only  --encoding scalar  --exp_name DiT_mini_rowOnly_n6_N4096_scalar  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
---sample_num 4096  --n_size 6  --rule row_only  --encoding onehot  --exp_name DiT_mini_rowOnly_n6_N4096_onehot  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --rule row_only  --encoding onehot  --onehot_type zero_mean  --sigma_data auto  --exp_name DiT_mini_rowOnly_n6_N4096_onehot_zeromean_autoSD  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
 --sample_num 4096  --n_size 6  --rule sudoku    --encoding scalar  --block_h 2  --block_w 3  --exp_name DiT_mini_sudoku6x6_N4096_scalar  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
---sample_num 4096  --n_size 6  --rule sudoku    --encoding onehot  --block_h 2  --block_w 3  --exp_name DiT_mini_sudoku6x6_N4096_onehot  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --rule sudoku    --encoding onehot  --block_h 2  --block_w 3  --onehot_type zero_mean  --sigma_data auto  --exp_name DiT_mini_sudoku6x6_N4096_onehot_zeromean_autoSD  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
 '
 
 export param_name="$(echo "$param_list" | head -n $SLURM_ARRAY_TASK_ID | tail -1)"
