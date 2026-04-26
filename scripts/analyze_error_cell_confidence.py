@@ -261,78 +261,140 @@ def print_summary(res, label):
         print(f"  {lbl:<28} {vc:>10.4f} {ec:>10.4f}  {ec-vc:>+9.4f}")
 
 
+def save_stats_table(results, labels, base_path):
+    """Save summary statistics as Markdown and LaTeX tables."""
+    stat_defs = [
+        ("N cells (correct)",  lambda cc, ce: f"{len(cc):,}",      lambda cc, ce: f"{len(cc):,}"),
+        ("N cells (error)",    lambda cc, ce: f"{len(ce):,}",      lambda cc, ce: f"{len(ce):,}"),
+        ("Error rate (%)",     lambda cc, ce: "—",                 lambda cc, ce: f"{100*len(ce)/(len(cc)+len(ce)):.1f}%"),
+        ("Mean uncertainty",   lambda cc, ce: f"{cc.mean():.4f}",  lambda cc, ce: f"{ce.mean():.4f}"),
+        ("Std uncertainty",    lambda cc, ce: f"{cc.std():.4f}",   lambda cc, ce: f"{ce.std():.4f}"),
+        ("% unc < 0.01 (conf>0.99)", lambda cc, ce: f"{(cc<0.01).mean():.1%}", lambda cc, ce: f"{(ce<0.01).mean():.1%}"),
+        ("% unc < 0.05 (conf>0.95)", lambda cc, ce: f"{(cc<0.05).mean():.1%}", lambda cc, ce: f"{(ce<0.05).mean():.1%}"),
+        ("% unc < 0.10 (conf>0.90)", lambda cc, ce: f"{(cc<0.10).mean():.1%}", lambda cc, ce: f"{(ce<0.10).mean():.1%}"),
+    ]
+
+    # Build rows: one column-pair per experiment
+    header_parts = ["Metric"]
+    for label in labels:
+        header_parts += [f"{label} (correct)", f"{label} (error)"]
+
+    rows = []
+    for metric_name, fn_corr, fn_err in stat_defs:
+        row = [metric_name]
+        for res in results:
+            cc = 1.0 - res["conf_correct"]
+            ce = 1.0 - res["conf_error"]
+            row.append(fn_corr(cc, ce))
+            row.append(fn_err(cc, ce))
+        rows.append(row)
+
+    # Markdown
+    md_lines = ["| " + " | ".join(header_parts) + " |"]
+    md_lines.append("| " + " | ".join(["---"] * len(header_parts)) + " |")
+    for row in rows:
+        md_lines.append("| " + " | ".join(row) + " |")
+    md_path = f"{base_path}_stats.md"
+    with open(md_path, "w") as f:
+        f.write("\n".join(md_lines) + "\n")
+
+    # LaTeX
+    n_cols = len(header_parts)
+    col_spec = "l" + "r" * (n_cols - 1)
+    tex_lines = [
+        r"\begin{table}[h]",
+        r"\centering",
+        r"\small",
+        r"\begin{tabular}{" + col_spec + "}",
+        r"\toprule",
+        " & ".join(header_parts) + r" \\",
+        r"\midrule",
+    ]
+    for row in rows:
+        tex_lines.append(" & ".join(row) + r" \\")
+    tex_lines += [
+        r"\bottomrule",
+        r"\end{tabular}",
+        r"\caption{Error cell uncertainty analysis.}",
+        r"\end{table}",
+    ]
+    tex_path = f"{base_path}_stats.tex"
+    with open(tex_path, "w") as f:
+        f.write("\n".join(tex_lines) + "\n")
+
+    print(f"Tables → {md_path}  +  {tex_path}")
+    # Also print markdown to console
+    print()
+    print("\n".join(md_lines))
+
+
 def plot_results(results, labels, outpath):
     n_exps = len(results)
-    fig, axes = plt.subplots(2, n_exps, figsize=(5.5 * n_exps, 8))
+    fig, axes = plt.subplots(1, n_exps, figsize=(5.5 * n_exps, 5))
     if n_exps == 1:
-        axes = axes[:, None]
-    fig.subplots_adjust(hspace=0.38, wspace=0.32)
+        axes = [axes]
+    fig.subplots_adjust(wspace=0.32)
 
     COLORS_ERR  = "tab:red"
     COLORS_CORR = "tab:blue"
 
-    for col, (res, label) in enumerate(zip(results, labels)):
-        cc = res["conf_correct"]
-        ce = res["conf_error"]
+    for ax, res, label in zip(axes, results, labels):
+        cc = 1.0 - res["conf_correct"]
+        ce = 1.0 - res["conf_error"]
         enc = res["encoding"]
 
-        if enc == "onehot":
-            bins = np.linspace(0.6, 1.02, 60)
-            xlabel = "Cell confidence (normalised)"
-            pct_label = "% conf > 0.99"
-            pct_fn = lambda x: (x > 0.99).mean()
-        else:
-            bins = np.linspace(-0.2, 1.05, 60)
-            xlabel = "Confidence (1 − dist/half-spacing)"
-            pct_label = "% conf > 0.95"
-            pct_fn = lambda x: (x > 0.95).mean()
+        zoom_max = 0.10
+        bins = np.linspace(0, zoom_max, 60)
 
-        # Panel 1: histogram
-        ax = axes[0, col]
-        ax.hist(cc, bins=bins, density=True, color=COLORS_CORR,
-                alpha=0.55, label=f"correct ({len(cc):,})")
-        ax.hist(ce, bins=bins, density=True, color=COLORS_ERR,
-                alpha=0.55, label=f"error ({len(ce):,})")
-        ax.set_xlabel(xlabel, fontsize=10)
-        ax.set_ylabel("Density", fontsize=10)
-        ax.set_title(f"{label}\n({enc})", fontsize=10)
-        ax.legend(fontsize=8)
+        cc_zoom = cc[cc <= zoom_max]
+        ce_zoom = ce[ce <= zoom_max]
+        frac_corr_out = (cc > zoom_max).mean()
+        frac_err_out  = (ce > zoom_max).mean()
+
+        ax.hist(cc_zoom, bins=bins, density=True, color=COLORS_CORR,
+                alpha=0.6, label=f"correct ({len(cc):,})")
+        ax.hist(ce_zoom, bins=bins, density=True, color=COLORS_ERR,
+                alpha=0.6, label=f"error ({len(ce):,})")
+
+        # Mean lines
+        ax.axvline(cc.mean(), color=COLORS_CORR, lw=1.8, ls="--",
+                   label=f"mean correct = {cc.mean():.4f}")
+        ax.axvline(ce.mean(), color=COLORS_ERR,  lw=1.8, ls="--",
+                   label=f"mean error   = {ce.mean():.4f}")
+
+        ax.set_xlabel("Cell uncertainty  (1 − confidence)", fontsize=11)
+        ax.set_ylabel("Density", fontsize=11)
+        ax.set_xlim(0, zoom_max)
+        ax.set_title(f"{label}  [{enc}]", fontsize=11, fontweight="bold")
+        ax.legend(fontsize=8.5, framealpha=0.9)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
         ax.grid(alpha=0.2)
 
-        # Panel 2: summary bars
-        ax2 = axes[1, col]
-        metrics = [
-            ("mean conf",  np.mean(cc),        np.mean(ce)),
-            ("median",     np.median(cc),       np.median(ce)),
-            (pct_label,    pct_fn(cc),          pct_fn(ce)),
-            ("% conf>0.90", (cc>0.90).mean(),   (ce>0.90).mean()),
-            ("% conf<0.70", (cc<0.70).mean(),   (ce<0.70).mean()),
-        ]
-        x_pos = np.arange(len(metrics))
-        w = 0.35
-        ax2.bar(x_pos - w/2, [m[1] for m in metrics], w, color=COLORS_CORR,
-                label="correct", alpha=0.8)
-        ax2.bar(x_pos + w/2, [m[2] for m in metrics], w, color=COLORS_ERR,
-                label="error", alpha=0.8)
-        ax2.set_xticks(x_pos)
-        ax2.set_xticklabels([m[0] for m in metrics], rotation=30, ha="right", fontsize=8)
-        ax2.set_ylabel("Value", fontsize=10)
-        ax2.set_title("Summary comparison", fontsize=10)
-        ax2.legend(fontsize=8)
-        ax2.spines["top"].set_visible(False)
-        ax2.spines["right"].set_visible(False)
-        ax2.grid(alpha=0.2, axis="y")
+        # Stats text box
+        stats_text = (
+            f"                correct    error\n"
+            f"std unc:        {cc.std():.4f}    {ce.std():.4f}\n"
+            f"% unc<0.01:    {(cc<0.01).mean():>6.1%}   {(ce<0.01).mean():>6.1%}\n"
+            f"% unc<0.05:    {(cc<0.05).mean():>6.1%}   {(ce<0.05).mean():>6.1%}\n"
+            f"% unc>0.10:    {frac_corr_out:>6.1%}   {frac_err_out:>6.1%}"
+        )
+        ax.text(0.98, 0.03, stats_text,
+                transform=ax.transAxes, ha="right", va="bottom", fontsize=8,
+                fontfamily="monospace",
+                bbox=dict(boxstyle="round,pad=0.4", fc="white", ec="gray", alpha=0.85))
 
     steps_str = f"steps {results[0]['steps'][0]}–{results[0]['steps'][-1]}"
-    fig.suptitle(f"Error cell confidence analysis  |  last {len(results[0]['steps'])} ckpts, {steps_str}",
-                 fontsize=11)
+    fig.suptitle(
+        f"Error cell uncertainty  |  last {len(results[0]['steps'])} ckpts, {steps_str}\n"
+        f"Uncertainty = 1 − confidence  (zoomed to [0, 0.10])",
+        fontsize=11)
 
     base, _ = os.path.splitext(outpath)
     plt.savefig(f"{base}.png", dpi=150, bbox_inches="tight")
     plt.savefig(f"{base}.pdf", bbox_inches="tight")
-    print(f"\nSaved → {base}.png  +  {base}.pdf")
+    print(f"Saved → {base}.png  +  {base}.pdf")
+    save_stats_table(results, labels, base)
 
 
 # ===========================================================================
