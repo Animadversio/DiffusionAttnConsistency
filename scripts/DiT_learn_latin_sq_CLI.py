@@ -225,8 +225,8 @@ def sampling_eval_callback_fn(epoch, loss, model):
         valid_int = metrics_perm["valid_int"]
     else:  # onehot
         x_oh = x_cpu.numpy().reshape(eval_sample_size, n_size, n_size * n_size)  # (N, n, n²)
-        metrics_perm   = evaluate_latin_square_onehot_samples(x_oh, n_size, eps=onehot_eps)
-        metrics_strict = evaluate_latin_square_onehot_samples(x_oh, n_size, eps=onehot_eps * 0.33)
+        metrics_perm   = evaluate_latin_square_onehot_samples(x_oh, n_size, eps=onehot_eps,        active=active, inactive=inactive)
+        metrics_strict = evaluate_latin_square_onehot_samples(x_oh, n_size, eps=onehot_eps * 0.33, active=active, inactive=inactive)
         nan_ratio_perm   = metrics_perm["nan_ratio"]
         nan_ratio_strict = metrics_strict["nan_ratio"]
         valid_int = metrics_perm["valid_int"]

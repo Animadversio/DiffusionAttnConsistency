@@ -265,18 +265,23 @@ def int_to_onehot(ls_int_flat, n, active=1.0, inactive=-1.0):
     return oh[0] if was_1d else oh        # (N, n, n²) or (n, n²)
 
 
-def onehot_to_int(ls_onehot, n, eps=0.3):
+def onehot_to_int(ls_onehot, n, eps=0.3, active=1.0, inactive=-1.0):
     """
     Convert one-hot-encoded Latin square back to integer encoding.
 
-    Takes argmax along the symbol axis. Entries where the max is not
-    close to `active` (i.e., all channels are ambiguous) are marked NaN.
+    Takes argmax along the symbol axis. Entries where the normalized confidence
+    (max_channel - inactive) / (active - inactive) < (1 - eps) are marked NaN.
+    This threshold is comparable across different encoding scales (pm1, zero_one,
+    zero_mean) since it measures fractional distance from inactive to active.
 
     Parameters
     ----------
     ls_onehot : np.ndarray of shape (N, n, n²) or (n, n²), float
     n         : int
-    eps       : float, entries whose max channel value < (active - eps) are NaN
+    eps       : float, cells with confidence < (1 - eps) are NaN.
+                eps=0.3 → threshold at 70% of the way from inactive to active.
+    active    : float, the active channel value used during encoding (default 1.0)
+    inactive  : float, the inactive channel value used during encoding (default -1.0)
 
     Returns
     -------
@@ -286,9 +291,10 @@ def onehot_to_int(ls_onehot, n, eps=0.3):
     oh = ls_onehot[None] if was_2d else ls_onehot   # (N, n, n²)
     # argmax along symbol axis → integer index
     int_vals = oh.argmax(axis=1).astype(float)       # (N, n²)
-    # mask where the maximum activation is too low (not clearly one-hot)
+    # confidence: fraction of the way from inactive to active
     max_act = oh.max(axis=1)                         # (N, n²)
-    int_vals[max_act < (1.0 - eps)] = np.nan
+    confidence = (max_act - inactive) / (active - inactive)
+    int_vals[confidence < (1.0 - eps)] = np.nan
     return int_vals[0] if was_2d else int_vals
 
 
@@ -428,17 +434,20 @@ def evaluate_latin_square_samples(x_flat_cont, n, eps=0.15):
 # Batch evaluation — one-hot encoding
 # ---------------------------------------------------------------------------
 
-def evaluate_latin_square_onehot_samples(x_onehot, n, eps=0.3):
+def evaluate_latin_square_onehot_samples(x_onehot, n, eps=0.3, active=1.0, inactive=-1.0):
     """
     Evaluate a batch of one-hot-encoded samples from the diffusion model.
 
     Parameters
     ----------
-    x_onehot : np.ndarray of shape (N, n, n²), continuous floats ≈ {-1, +1}
+    x_onehot : np.ndarray of shape (N, n, n²), continuous floats
                (channel axis = symbol axis)
     n        : int
-    eps      : float, a cell is "ambiguous" if max channel < (1.0 - eps).
+    eps      : float, a cell is "ambiguous" if confidence < (1 - eps), where
+               confidence = (max_channel - inactive) / (active - inactive).
                Use eps=0.3 (permissive) or eps=0.1 (strict).
+    active   : float, active channel value used during encoding (default 1.0)
+    inactive : float, inactive channel value used during encoding (default -1.0)
 
     Returns
     -------
@@ -450,7 +459,7 @@ def evaluate_latin_square_onehot_samples(x_onehot, n, eps=0.3):
         valid_int        — np.ndarray (M, n²) int, decoded valid samples
     """
     N = len(x_onehot)
-    int_vals = onehot_to_int(x_onehot, n, eps=eps)   # (N, n²), NaN where ambiguous
+    int_vals = onehot_to_int(x_onehot, n, eps=eps, active=active, inactive=inactive)   # (N, n²), NaN where ambiguous
 
     nan_mask = np.isnan(int_vals).any(axis=1)
     nan_ratio = float(nan_mask.mean())
