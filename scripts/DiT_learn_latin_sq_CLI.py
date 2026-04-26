@@ -109,6 +109,11 @@ def parse_args():
     parser.add_argument("--eval_fix_noise_seed", action="store_true", help="Evaluation fix noise seed")
     parser.add_argument("--encoding", type=str, default="scalar", choices=["scalar", "onehot"],
                         help="Encoding: 'scalar' (1-channel normalized int) or 'onehot' (n-channel binary {-1,+1})")
+    parser.add_argument("--onehot_type", type=str, default="pm1",
+                        choices=["pm1", "zero_one", "zero_mean"],
+                        help="One-hot encoding variant: pm1={-1,+1}, zero_one={0,1}, zero_mean=zero-mean {-1/n,(n-1)/n}")
+    parser.add_argument("--sigma_data", type=str, default="1.0",
+                        help="EDM sigma_data; use 'auto' to compute from training data RMS")
     parser.add_argument("--snap_eps", type=float, default=0.15, help="Snapping tolerance for scalar decoding")
     parser.add_argument("--onehot_eps", type=float, default=0.3, help="Ambiguity threshold for one-hot decoding (max channel must exceed 1-eps)")
     parser.add_argument("--record_frequency", type=int, default=0, help="Evaluation sample frequency")
@@ -142,6 +147,7 @@ eval_batch_size = args.eval_batch_size
 eval_sampling_steps = args.eval_sampling_steps
 eval_fix_noise_seed = args.eval_fix_noise_seed
 encoding = args.encoding
+onehot_type = args.onehot_type
 snap_eps = args.snap_eps
 onehot_eps = args.onehot_eps
 record_frequency = args.record_frequency
@@ -264,8 +270,16 @@ if encoding == "scalar":
     imgchannels = 1
     Xtsr = torch.from_numpy(x_encoded).view(sample_num, imgchannels, imgsize, imgsize)
 else:  # onehot
-    # (N, n, n²) binary {-1, +1}, reshaped to (N, n, n, n)
-    x_encoded = int_to_onehot(x_int, n_size, active=1.0, inactive=-1.0)  # (N, n, n²)
+    if onehot_type == "pm1":
+        active, inactive = 1.0, -1.0
+    elif onehot_type == "zero_one":
+        active, inactive = 1.0, 0.0
+    elif onehot_type == "zero_mean":
+        active  = (n_size - 1) / n_size
+        inactive = -1.0 / n_size
+    else:
+        raise ValueError(f"Unknown onehot_type: {onehot_type}")
+    x_encoded = int_to_onehot(x_int, n_size, active=active, inactive=inactive)
     imgchannels = n_size
     Xtsr = torch.from_numpy(x_encoded).view(sample_num, imgchannels, imgsize, imgsize)
 
@@ -274,7 +288,11 @@ th.save(Xtsr, f"{savedir}/training_data_tsr.pt")
 # Precompute integer training set for memorization lookup (encoding-agnostic)
 _train_int_flat = x_int   # (N, n²) integer
 
-sigma_data = 1.0
+if args.sigma_data == "auto":
+    sigma_data = float(Xtsr.pow(2).mean().sqrt())
+    print(f"sigma_data (auto) = {sigma_data:.4f}")
+else:
+    sigma_data = float(args.sigma_data)
 pnts = Xtsr.view(Xtsr.shape[0], -1)
 imgshape = Xtsr.shape[1:]
 ndim = pnts.shape[1]

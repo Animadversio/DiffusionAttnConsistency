@@ -1,10 +1,10 @@
 #!/bin/bash
-#SBATCH -t 15:00:00          # Runtime in D-HH:MM
+#SBATCH -t 3-00:00:00        # Runtime in D-HH:MM (3 days for DiT-B jobs)
 #SBATCH -p kempner_h100      # Partition to submit to
 #SBATCH -c 16                # Number of cores
-#SBATCH --mem=75G            # Memory pool for all cores
+#SBATCH --mem=100G           # Memory pool for all cores
 #SBATCH --gres=gpu:1
-#SBATCH --array=1-4%4
+#SBATCH --array=9-10%4       # Jobs 1-4 = DiT-mini (done); 5-8 = DiT-B (running); 9-10 = encoding ablations
 #SBATCH --account=kempner_binxuwang_lab
 #SBATCH -o DiT_edm_learn_latin_sq_%A_%a.out
 #SBATCH -e DiT_edm_learn_latin_sq_%A_%a.err
@@ -12,10 +12,16 @@
 
 echo "$SLURM_ARRAY_TASK_ID"
 param_list=\
-'--sample_num 4096  --n_size 5  --encoding scalar  --exp_name DiT_mini_latinSq_n5_N4096_scalar  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
---sample_num 4096  --n_size 5  --encoding onehot  --exp_name DiT_mini_latinSq_n5_N4096_onehot  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
---sample_num 4096  --n_size 6  --encoding scalar  --exp_name DiT_mini_latinSq_n6_N4096_scalar  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
---sample_num 4096  --n_size 6  --encoding onehot  --exp_name DiT_mini_latinSq_n6_N4096_onehot  --patch_size 1 --hidden_size 384 --depth 6 --num_heads 6 --mlp_ratio 4  --nsteps 1000000
+'--sample_num 4096  --n_size 5  --encoding scalar  --exp_name DiT_mini_latinSq_n5_N4096_scalar  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 5  --encoding onehot  --exp_name DiT_mini_latinSq_n5_N4096_onehot  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --encoding scalar  --exp_name DiT_mini_latinSq_n6_N4096_scalar  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --encoding onehot  --exp_name DiT_mini_latinSq_n6_N4096_onehot  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 5  --encoding scalar  --exp_name DiT_B_latinSq_n5_N4096_scalar     --patch_size 1 --hidden_size 768 --depth 12 --num_heads 12 --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 5  --encoding onehot  --exp_name DiT_B_latinSq_n5_N4096_onehot    --patch_size 1 --hidden_size 768 --depth 12 --num_heads 12 --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --encoding scalar  --exp_name DiT_B_latinSq_n6_N4096_scalar     --patch_size 1 --hidden_size 768 --depth 12 --num_heads 12 --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --encoding onehot  --exp_name DiT_B_latinSq_n6_N4096_onehot    --patch_size 1 --hidden_size 768 --depth 12 --num_heads 12 --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --encoding onehot  --onehot_type zero_mean  --sigma_data auto  --exp_name DiT_mini_latinSq_n6_N4096_onehot_zeromean_autoSD  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --encoding onehot  --onehot_type zero_one   --sigma_data auto  --exp_name DiT_mini_latinSq_n6_N4096_onehot_zeroone_autoSD   --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
 '
 
 export param_name="$(echo "$param_list" | head -n $SLURM_ARRAY_TASK_ID | tail -1)"

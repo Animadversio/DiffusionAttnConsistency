@@ -172,6 +172,40 @@ GROUPS = {
         ],
         "title": "DiT-mini Latin Square Learning (N=4096)",
     },
+    "latinsq_B": {
+        "exp_dirs": [
+            "DiT_B_latinSq_n5_N4096_scalar",
+            "DiT_B_latinSq_n5_N4096_onehot",
+            "DiT_B_latinSq_n6_N4096_scalar",
+            "DiT_B_latinSq_n6_N4096_onehot",
+        ],
+        "tags": [
+            "train/loss",
+            "eval/full_valid_ratio",
+            "eval/row_valid_ratio",
+            "eval/col_valid_ratio",
+            "eval/sample_mem_ratio",
+            "eval/nan_ratio_permissive",
+        ],
+        "title": "DiT-B Latin Square Learning (N=4096, 12L 12H 768D)",
+    },
+    "latinsq_encoding": {
+        "exp_dirs": [
+            "DiT_mini_latinSq_n6_N4096_onehot",
+            "DiT_mini_latinSq_n6_N4096_onehot_zeromean_autoSD",
+            "DiT_mini_latinSq_n6_N4096_onehot_zeroone_autoSD",
+        ],
+        "tags": [
+            "train/loss",
+            "eval/full_valid_ratio",
+            "eval/row_valid_ratio",
+            "eval/col_valid_ratio",
+            "eval/sample_mem_ratio",
+            "eval/nan_ratio_permissive",
+        ],
+        "title": "DiT-mini Latin Square n=6 One-Hot Encoding Ablation",
+        "labels": ["{-1,+1} σ=1.0 (baseline)", "zero-mean σ=auto", "{0,1} σ=auto"],
+    },
 }
 
 
@@ -196,11 +230,17 @@ def main():
     # Resolve group shortcut
     if args.group:
         g = GROUPS[args.group]
-        prefix = g["prefix"]
-        tags   = args.tags or g["tags"]
-        title  = args.title if args.title != "Training Curves" else g["title"]
-        exp_dirs = args.exp_dirs or discover_experiments(args.saveroot, prefix)
-        labels   = args.labels or [make_label(e, prefix) for e in exp_dirs]
+        tags  = args.tags or g["tags"]
+        title = args.title if args.title != "Training Curves" else g["title"]
+        if "exp_dirs" in g:
+            # explicit list — no prefix discovery
+            exp_dirs = args.exp_dirs or g["exp_dirs"]
+            prefix   = ""
+            labels   = args.labels or g.get("labels") or [e.replace("DiT_B_latinSq_", "").replace("DiT_mini_latinSq_", "") for e in exp_dirs]
+        else:
+            prefix   = g["prefix"]
+            exp_dirs = args.exp_dirs or discover_experiments(args.saveroot, prefix)
+            labels   = args.labels or [make_label(e, prefix) for e in exp_dirs]
     elif args.prefix:
         prefix   = args.prefix
         exp_dirs = args.exp_dirs or discover_experiments(args.saveroot, prefix)
