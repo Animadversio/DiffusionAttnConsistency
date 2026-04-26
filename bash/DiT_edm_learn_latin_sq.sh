@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH -t 3-00:00:00        # Runtime in D-HH:MM (3 days for DiT-B jobs)
+#SBATCH -t 1-06:00:00        # Runtime in D-HH:MM (1d6h for DiT-mini; 3d for DiT-B)
 #SBATCH -p kempner_h100      # Partition to submit to
 #SBATCH -c 16                # Number of cores
 #SBATCH --mem=100G           # Memory pool for all cores
