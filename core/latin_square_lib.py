@@ -509,6 +509,213 @@ def compute_memorization(train_flat_int, gen_flat_int):
 
 
 # ---------------------------------------------------------------------------
+# Row-only rule  (each row is a permutation, no column constraint)
+# ---------------------------------------------------------------------------
+
+def sample_row_permutation_matrix(N, n):
+    """
+    Sample N matrices where each row is an independent random permutation of {0..n-1}.
+    Columns have no constraint. The valid space is (n!)^n (astronomically large).
+
+    Returns
+    -------
+    np.ndarray of shape (N, n²), dtype int
+    """
+    return np.argsort(np.random.rand(N, n, n), axis=2).reshape(N, n * n)
+
+
+def evaluate_row_permutation_samples(x_flat_cont, n, eps=0.15):
+    """
+    Evaluate scalar-encoded samples against the row-only rule.
+
+    Returns
+    -------
+    dict with keys: nan_ratio, row_valid_ratio, full_valid_ratio, valid_int
+    """
+    x_int = snap_to_integer(x_flat_cont, n, eps=eps)
+    nan_mask = np.isnan(x_int).any(axis=1)
+    nan_ratio = float(nan_mask.mean())
+    valid_int = x_int[~nan_mask].astype(int)
+    M = len(valid_int)
+    if M == 0:
+        return dict(nan_ratio=nan_ratio, row_valid_ratio=0.0,
+                    full_valid_ratio=0.0, valid_int=valid_int)
+    row_valid, _ = check_latin_square_batch(valid_int, n)
+    return dict(
+        nan_ratio=nan_ratio,
+        row_valid_ratio=float(row_valid.mean()),
+        full_valid_ratio=float(row_valid.mean()),
+        valid_int=valid_int,
+    )
+
+
+def evaluate_row_permutation_onehot_samples(x_onehot, n, eps=0.3, active=1.0, inactive=-1.0):
+    """
+    Evaluate one-hot-encoded samples against the row-only rule.
+
+    Returns
+    -------
+    dict with keys: nan_ratio, row_valid_ratio, full_valid_ratio, valid_int
+    """
+    int_vals = onehot_to_int(x_onehot, n, eps=eps, active=active, inactive=inactive)
+    nan_mask = np.isnan(int_vals).any(axis=1)
+    nan_ratio = float(nan_mask.mean())
+    valid_int = int_vals[~nan_mask].astype(int)
+    M = len(valid_int)
+    if M == 0:
+        return dict(nan_ratio=nan_ratio, row_valid_ratio=0.0,
+                    full_valid_ratio=0.0, valid_int=valid_int)
+    row_valid, _ = check_latin_square_batch(valid_int, n)
+    return dict(
+        nan_ratio=nan_ratio,
+        row_valid_ratio=float(row_valid.mean()),
+        full_valid_ratio=float(row_valid.mean()),
+        valid_int=valid_int,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sudoku rule  (row + column + block constraints)
+# ---------------------------------------------------------------------------
+
+SUDOKU_COUNTS = {(6, 2, 3): 28_200_960, (4, 2, 2): 288}
+
+
+def valid_sudoku_set_size(n, block_h, block_w):
+    """Known number of valid n×n Sudoku grids with block_h×block_w sub-blocks."""
+    return SUDOKU_COUNTS.get((n, block_h, block_w), None)
+
+
+def check_sudoku_blocks_batch(x_int_flat, n, block_h, block_w):
+    """
+    Check that every block_h×block_w sub-grid is a permutation of {0..n-1}.
+
+    For 6×6 with block_h=2, block_w=3: 6 blocks (2 row-bands × 3 col-bands).
+
+    Parameters
+    ----------
+    x_int_flat : np.ndarray (N, n²) int
+    n          : int
+    block_h    : int, block height in rows
+    block_w    : int, block width in columns
+
+    Returns
+    -------
+    block_valid : np.ndarray (N,) bool
+    """
+    N = len(x_int_flat)
+    grids = x_int_flat.reshape(N, n, n)
+    n_brow = n // block_h
+    n_bcol = n // block_w
+    target = np.arange(n)
+    valid = np.ones(N, dtype=bool)
+    for br in range(n_brow):
+        for bc in range(n_bcol):
+            block = grids[:, br * block_h:(br + 1) * block_h,
+                              bc * block_w:(bc + 1) * block_w]
+            flat = block.reshape(N, n)
+            sorted_block = np.sort(flat, axis=1)
+            valid &= (sorted_block == target).all(axis=1)
+    return valid
+
+
+def sample_sudoku_dataset(N, n, block_h=2, block_w=3):
+    """
+    Sample N unique valid Sudoku grids via rejection sampling from Latin squares.
+
+    For 6×6 with 2×3 blocks: ~3.5% of Latin squares pass the block check,
+    so ~29× oversampling is needed on average.
+
+    Parameters
+    ----------
+    N       : int
+    n       : int
+    block_h : int, block height (default 2)
+    block_w : int, block width  (default 3)
+
+    Returns
+    -------
+    np.ndarray of shape (N, n²), dtype int
+    """
+    collected = []
+    seen = set()
+    batch_size = max(500, N * 35)
+    while len(collected) < N:
+        need = N - len(collected)
+        batch = sample_latin_square_vec(max(500, need * 35), n)
+        mask = check_sudoku_blocks_batch(batch, n, block_h, block_w)
+        for row in batch[mask]:
+            key = row.tobytes()
+            if key not in seen:
+                seen.add(key)
+                collected.append(row)
+                if len(collected) >= N:
+                    break
+    return np.array(collected[:N])
+
+
+def evaluate_sudoku_samples(x_flat_cont, n, block_h=2, block_w=3, eps=0.15):
+    """
+    Evaluate scalar-encoded samples against the Sudoku rule (row + col + block).
+
+    Returns
+    -------
+    dict with keys: nan_ratio, row_valid_ratio, col_valid_ratio,
+                    block_valid_ratio, full_valid_ratio, valid_int
+    """
+    x_int = snap_to_integer(x_flat_cont, n, eps=eps)
+    nan_mask = np.isnan(x_int).any(axis=1)
+    nan_ratio = float(nan_mask.mean())
+    valid_int = x_int[~nan_mask].astype(int)
+    M = len(valid_int)
+    if M == 0:
+        return dict(nan_ratio=nan_ratio, row_valid_ratio=0.0, col_valid_ratio=0.0,
+                    block_valid_ratio=0.0, full_valid_ratio=0.0, valid_int=valid_int)
+    row_valid, col_valid = check_latin_square_batch(valid_int, n)
+    block_valid = check_sudoku_blocks_batch(valid_int, n, block_h, block_w)
+    full_valid = row_valid & col_valid & block_valid
+    return dict(
+        nan_ratio=nan_ratio,
+        row_valid_ratio=float(row_valid.mean()),
+        col_valid_ratio=float(col_valid.mean()),
+        block_valid_ratio=float(block_valid.mean()),
+        full_valid_ratio=float(full_valid.mean()),
+        valid_int=valid_int,
+    )
+
+
+def evaluate_sudoku_onehot_samples(x_onehot, n, block_h=2, block_w=3,
+                                    eps=0.3, active=1.0, inactive=-1.0):
+    """
+    Evaluate one-hot-encoded samples against the Sudoku rule (row + col + block).
+
+    Returns
+    -------
+    dict with keys: nan_ratio, row_valid_ratio, col_valid_ratio,
+                    block_valid_ratio, full_valid_ratio, valid_int
+    """
+    int_vals = onehot_to_int(x_onehot, n, eps=eps, active=active, inactive=inactive)
+    nan_mask = np.isnan(int_vals).any(axis=1)
+    nan_ratio = float(nan_mask.mean())
+    valid_int = int_vals[~nan_mask].astype(int)
+    M = len(valid_int)
+    if M == 0:
+        return dict(nan_ratio=nan_ratio, row_valid_ratio=0.0, col_valid_ratio=0.0,
+                    block_valid_ratio=0.0, full_valid_ratio=0.0, valid_int=valid_int)
+    row_valid, col_valid = check_latin_square_batch(valid_int, n)
+    block_valid = check_sudoku_blocks_batch(valid_int, n, block_h, block_w)
+    full_valid = row_valid & col_valid & block_valid
+    return dict(
+        nan_ratio=nan_ratio,
+        row_valid_ratio=float(row_valid.mean()),
+        col_valid_ratio=float(col_valid.mean()),
+        block_valid_ratio=float(block_valid.mean()),
+        full_valid_ratio=float(full_valid.mean()),
+        valid_int=valid_int,
+    )
+
+
+# ---------------------------------------------------------------------------
 # Quick self-test
 # ---------------------------------------------------------------------------
 

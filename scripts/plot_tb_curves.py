@@ -189,6 +189,23 @@ GROUPS = {
         ],
         "title": "DiT-B Latin Square Learning (N=4096, 12L 12H 768D)",
     },
+    "latinsq_rules": {
+        "exp_dirs": [
+            "DiT_mini_latinSq_n6_N4096_onehot",
+            "DiT_mini_rowOnly_n6_N4096_onehot",
+            "DiT_mini_sudoku6x6_N4096_onehot",
+        ],
+        "tags": [
+            "train/loss",
+            "eval/full_valid_ratio",
+            "eval/row_valid_ratio",
+            "eval/col_valid_ratio",
+            "eval/block_valid_ratio",
+            "eval/nan_ratio_permissive",
+        ],
+        "title": "DiT-mini n=6 Rule Complexity Comparison (onehot)",
+        "labels": ["Latin square (row+col)", "Row-only", "Sudoku 6×6 (row+col+block)"],
+    },
     "latinsq_encoding": {
         "exp_dirs": [
             "DiT_mini_latinSq_n6_N4096_onehot",

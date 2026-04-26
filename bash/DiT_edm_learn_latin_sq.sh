@@ -4,7 +4,7 @@
 #SBATCH -c 16                # Number of cores
 #SBATCH --mem=100G           # Memory pool for all cores
 #SBATCH --gres=gpu:1
-#SBATCH --array=9-10%4       # Jobs 1-4 = DiT-mini (done); 5-8 = DiT-B (running); 9-10 = encoding ablations
+#SBATCH --array=11-14%4      # Jobs 1-4 = DiT-mini (done); 5-8 = DiT-B (running); 9-10 = encoding ablations; 11-14 = rule variants
 #SBATCH --account=kempner_binxuwang_lab
 #SBATCH -o DiT_edm_learn_latin_sq_%A_%a.out
 #SBATCH -e DiT_edm_learn_latin_sq_%A_%a.err
@@ -22,6 +22,10 @@ param_list=\
 --sample_num 4096  --n_size 6  --encoding onehot  --exp_name DiT_B_latinSq_n6_N4096_onehot    --patch_size 1 --hidden_size 768 --depth 12 --num_heads 12 --mlp_ratio 4  --nsteps 1000000
 --sample_num 4096  --n_size 6  --encoding onehot  --onehot_type zero_mean  --sigma_data auto  --exp_name DiT_mini_latinSq_n6_N4096_onehot_zeromean_autoSD  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
 --sample_num 4096  --n_size 6  --encoding onehot  --onehot_type zero_one   --sigma_data auto  --exp_name DiT_mini_latinSq_n6_N4096_onehot_zeroone_autoSD   --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --rule row_only  --encoding scalar  --exp_name DiT_mini_rowOnly_n6_N4096_scalar  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --rule row_only  --encoding onehot  --exp_name DiT_mini_rowOnly_n6_N4096_onehot  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --rule sudoku    --encoding scalar  --block_h 2  --block_w 3  --exp_name DiT_mini_sudoku6x6_N4096_scalar  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
+--sample_num 4096  --n_size 6  --rule sudoku    --encoding onehot  --block_h 2  --block_w 3  --exp_name DiT_mini_sudoku6x6_N4096_onehot  --patch_size 1 --hidden_size 384 --depth 6  --num_heads 6  --mlp_ratio 4  --nsteps 1000000
 '
 
 export param_name="$(echo "$param_list" | head -n $SLURM_ARRAY_TASK_ID | tail -1)"

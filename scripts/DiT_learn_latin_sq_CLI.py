@@ -31,6 +31,13 @@ from core.latin_square_lib import (
     compute_memorization,
     valid_set_size,
     expected_memorization_ratio,
+    sample_row_permutation_matrix,
+    evaluate_row_permutation_samples,
+    evaluate_row_permutation_onehot_samples,
+    sample_sudoku_dataset,
+    valid_sudoku_set_size,
+    evaluate_sudoku_samples,
+    evaluate_sudoku_onehot_samples,
 )
 from circuit_toolkit.plot_utils import saveallforms, to_imgrid, show_imgrid
 from torch.utils.tensorboard import SummaryWriter
@@ -120,6 +127,13 @@ def parse_args():
     # dataset hyper-parameters
     parser.add_argument("--sample_num", type=int, default=4096, help="Number of training samples")
     parser.add_argument("--n_size", type=int, default=6, help="Latin square size (n×n, symbols {0,...,n-1})")
+    parser.add_argument("--rule", type=str, default="latin_square",
+                        choices=["latin_square", "row_only", "sudoku"],
+                        help="Constraint rule: latin_square (row+col), row_only (row only), sudoku (row+col+block)")
+    parser.add_argument("--block_h", type=int, default=2,
+                        help="Sudoku block height in rows (used when --rule sudoku)")
+    parser.add_argument("--block_w", type=int, default=3,
+                        help="Sudoku block width in columns (used when --rule sudoku)")
     parser.add_argument(
         '-r', '--record_step_range',
         metavar=('START', 'END', 'STEP'),
@@ -149,6 +163,9 @@ eval_fix_noise_seed = args.eval_fix_noise_seed
 encoding = args.encoding
 onehot_type = args.onehot_type
 snap_eps = args.snap_eps
+rule = args.rule
+block_h = args.block_h
+block_w = args.block_w
 onehot_eps = args.onehot_eps
 record_frequency = args.record_frequency
 save_ckpts = args.save_ckpts
@@ -218,51 +235,86 @@ def sampling_eval_callback_fn(epoch, loss, model):
     # --- Encoding-specific decoding & evaluation ---
     if encoding == "scalar":
         x_flat_cont = x_cpu.flatten(1).numpy()   # (N, n²) float
-        metrics_perm = evaluate_latin_square_samples(x_flat_cont, n_size, eps=snap_eps)
-        metrics_strict = evaluate_latin_square_samples(x_flat_cont, n_size, eps=snap_eps * 0.1)
+        if rule == "latin_square":
+            metrics_perm   = evaluate_latin_square_samples(x_flat_cont, n_size, eps=snap_eps)
+            metrics_strict = evaluate_latin_square_samples(x_flat_cont, n_size, eps=snap_eps * 0.1)
+        elif rule == "row_only":
+            metrics_perm   = evaluate_row_permutation_samples(x_flat_cont, n_size, eps=snap_eps)
+            metrics_strict = evaluate_row_permutation_samples(x_flat_cont, n_size, eps=snap_eps * 0.1)
+        elif rule == "sudoku":
+            metrics_perm   = evaluate_sudoku_samples(x_flat_cont, n_size, block_h, block_w, eps=snap_eps)
+            metrics_strict = evaluate_sudoku_samples(x_flat_cont, n_size, block_h, block_w, eps=snap_eps * 0.1)
         nan_ratio_perm   = metrics_perm["nan_ratio"]
         nan_ratio_strict = metrics_strict["nan_ratio"]
         valid_int = metrics_perm["valid_int"]
     else:  # onehot
         x_oh = x_cpu.numpy().reshape(eval_sample_size, n_size, n_size * n_size)  # (N, n, n²)
-        metrics_perm   = evaluate_latin_square_onehot_samples(x_oh, n_size, eps=onehot_eps,        active=active, inactive=inactive)
-        metrics_strict = evaluate_latin_square_onehot_samples(x_oh, n_size, eps=onehot_eps * 0.33, active=active, inactive=inactive)
+        if rule == "latin_square":
+            metrics_perm   = evaluate_latin_square_onehot_samples(x_oh, n_size, eps=onehot_eps,         active=active, inactive=inactive)
+            metrics_strict = evaluate_latin_square_onehot_samples(x_oh, n_size, eps=onehot_eps * 0.33,  active=active, inactive=inactive)
+        elif rule == "row_only":
+            metrics_perm   = evaluate_row_permutation_onehot_samples(x_oh, n_size, eps=onehot_eps,        active=active, inactive=inactive)
+            metrics_strict = evaluate_row_permutation_onehot_samples(x_oh, n_size, eps=onehot_eps * 0.33, active=active, inactive=inactive)
+        elif rule == "sudoku":
+            metrics_perm   = evaluate_sudoku_onehot_samples(x_oh, n_size, block_h, block_w, eps=onehot_eps,        active=active, inactive=inactive)
+            metrics_strict = evaluate_sudoku_onehot_samples(x_oh, n_size, block_h, block_w, eps=onehot_eps * 0.33, active=active, inactive=inactive)
         nan_ratio_perm   = metrics_perm["nan_ratio"]
         nan_ratio_strict = metrics_strict["nan_ratio"]
         valid_int = metrics_perm["valid_int"]
 
     M = len(valid_int)
     if M > 0:
-        full_valid_ratio = metrics_perm["full_valid_ratio"]
-        row_valid_ratio  = metrics_perm["row_valid_ratio"]
-        col_valid_ratio  = metrics_perm["col_valid_ratio"]
+        full_valid_ratio  = metrics_perm["full_valid_ratio"]
+        row_valid_ratio   = metrics_perm["row_valid_ratio"]
+        col_valid_ratio   = metrics_perm.get("col_valid_ratio", 0.0)
+        block_valid_ratio = metrics_perm.get("block_valid_ratio", 0.0)
         mem_ratio = compute_memorization(_train_int_flat, valid_int)
     else:
-        full_valid_ratio = row_valid_ratio = col_valid_ratio = mem_ratio = 0.0
+        full_valid_ratio = row_valid_ratio = col_valid_ratio = block_valid_ratio = mem_ratio = 0.0
 
-    print(f"epoch: {epoch:06d} | [{encoding}] full_valid: {int(M * full_valid_ratio)}/{M} valid "
-          f"({full_valid_ratio:.3f}) | row={row_valid_ratio:.3f} col={col_valid_ratio:.3f} "
-          f"| mem={mem_ratio:.4f} | nan_perm={nan_ratio_perm:.3f} nan_strict={nan_ratio_strict:.3f}")
+    rule_info = f"row={row_valid_ratio:.3f}"
+    if rule in ("latin_square", "sudoku"):
+        rule_info += f" col={col_valid_ratio:.3f}"
+    if rule == "sudoku":
+        rule_info += f" block={block_valid_ratio:.3f}"
+    print(f"epoch: {epoch:06d} | [{rule}/{encoding}] full_valid: {int(M * full_valid_ratio)}/{M} "
+          f"({full_valid_ratio:.3f}) | {rule_info} | mem={mem_ratio:.4f} "
+          f"| nan_perm={nan_ratio_perm:.3f} nan_strict={nan_ratio_strict:.3f}")
 
     # TensorBoard logging
-    writer.add_scalar("train/loss",              loss,             epoch)
-    writer.add_scalar("eval/full_valid_ratio",   full_valid_ratio, epoch)
-    writer.add_scalar("eval/row_valid_ratio",    row_valid_ratio,  epoch)
-    writer.add_scalar("eval/col_valid_ratio",    col_valid_ratio,  epoch)
-    writer.add_scalar("eval/sample_mem_ratio",   mem_ratio,        epoch)
-    writer.add_scalar("eval/nan_ratio_permissive", nan_ratio_perm,   epoch)
-    writer.add_scalar("eval/nan_ratio_strict",     nan_ratio_strict, epoch)
+    writer.add_scalar("train/loss",                loss,              epoch)
+    writer.add_scalar("eval/full_valid_ratio",     full_valid_ratio,  epoch)
+    writer.add_scalar("eval/row_valid_ratio",      row_valid_ratio,   epoch)
+    writer.add_scalar("eval/col_valid_ratio",      col_valid_ratio,   epoch)
+    writer.add_scalar("eval/sample_mem_ratio",     mem_ratio,         epoch)
+    writer.add_scalar("eval/nan_ratio_permissive", nan_ratio_perm,    epoch)
+    writer.add_scalar("eval/nan_ratio_strict",     nan_ratio_strict,  epoch)
+    if rule == "sudoku":
+        writer.add_scalar("eval/block_valid_ratio", block_valid_ratio, epoch)
 
 
 device = get_device()
 imgsize = n_size
 
-print(f"Generating Latin square dataset: N={sample_num}, n={n_size}, encoding={encoding}")
-x_int = sample_latin_square_dataset(N=sample_num, n=n_size)   # (N, n²), integer
-
-dataset_name = f"latinSq_n{n_size}_N{sample_num}_{encoding}"
-print(f"{dataset_name} dataset, valid_set_size={valid_set_size(n_size):,}, "
-      f"mem_ratio={expected_memorization_ratio(sample_num, n_size):.3e}")
+print(f"Generating dataset: rule={rule}, N={sample_num}, n={n_size}, encoding={encoding}")
+if rule == "latin_square":
+    x_int = sample_latin_square_dataset(N=sample_num, n=n_size)
+    dataset_name = f"latinSq_n{n_size}_N{sample_num}_{encoding}"
+    vs = valid_set_size(n_size)
+    print(f"{dataset_name}: valid_set_size={vs:,}, mem_ratio={expected_memorization_ratio(sample_num, n_size):.3e}")
+elif rule == "row_only":
+    x_int = sample_row_permutation_matrix(sample_num, n_size)
+    dataset_name = f"rowOnly_n{n_size}_N{sample_num}_{encoding}"
+    print(f"{dataset_name}: row-permutation matrices (space=(n!)^n, effectively infinite)")
+elif rule == "sudoku":
+    print(f"  Sampling sudoku grids (rejection from Latin squares, ~3.5% pass rate)...")
+    x_int = sample_sudoku_dataset(sample_num, n_size, block_h, block_w)
+    dataset_name = f"sudoku{n_size}x{n_size}_bh{block_h}bw{block_w}_N{sample_num}_{encoding}"
+    vs_sudoku = valid_sudoku_set_size(n_size, block_h, block_w)
+    mem_note = f"valid_set_size={vs_sudoku:,}, mem_ratio={sample_num/vs_sudoku:.3e}" if vs_sudoku else "valid_set_size=unknown"
+    print(f"{dataset_name}: {mem_note}")
+else:
+    raise ValueError(f"Unknown rule: {rule}")
 
 if encoding == "scalar":
     # (N, n²) float in [-1, +1], reshaped to (N, 1, n, n)
