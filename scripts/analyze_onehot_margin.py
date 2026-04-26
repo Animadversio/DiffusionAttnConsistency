@@ -98,8 +98,9 @@ def parse_args():
     parser.add_argument("--n_ckpts", type=int, default=10,
                         help="Number of latest sample checkpoints to average over")
     parser.add_argument("--eps_values", type=float, nargs="+",
-                        default=[0.01, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 0.9],
+                        default=[0.001, 0.002, 0.005, 0.01, 0.02, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, 0.7, 0.9],
                         help="Confidence threshold values to sweep")
+    parser.add_argument("--log_x", action="store_true", help="Use log scale on x axis")
     parser.add_argument("--outpath", type=str, default="/tmp/onehot_margin.png")
     return parser.parse_args()
 
@@ -184,11 +185,13 @@ def main():
         ax.set_xlabel("eps (confidence threshold)")
         ax.set_ylabel(ylabel)
         ax.set_title(label)
+        if args.log_x:
+            ax.set_xscale("log")
         ax.set_xlim(eps_vals[0], eps_vals[-1])
         ax.set_ylim(0, 1.05)
         ax.axvline(0.3, color="gray", ls="--", lw=1, label="default eps=0.3")
         ax.legend(fontsize=8)
-        ax.grid(alpha=0.25)
+        ax.grid(alpha=0.25, which="both")
 
     # Margin distribution histogram
     ax = axes[3]
