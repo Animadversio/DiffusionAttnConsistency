@@ -1,0 +1,89 @@
+\section{Error Cell Confidence Analysis}
+
+\subsection{Setup}
+
+We investigate whether cells that cause rule violations in the model's decoded output
+are systematically less confident than correct cells.
+The analysis is applied to Latin square samples from two encoding families:
+one-hot and scalar.
+
+\subsection{Confidence Estimation}
+
+\paragraph{One-hot encoding.}
+The model produces an $N \times n \times n^2$ tensor in which the $n$ channels over
+each of the $n^2$ cell positions form a soft one-hot vector.
+Per-cell confidence is defined as
+\begin{equation}
+  c_{ij} = \frac{\max_k \, x_{ijk} - x_{\text{inactive}}}{x_{\text{active}} - x_{\text{inactive}}} \in [0,1],
+  \label{eq:onehot_conf}
+\end{equation}
+where $x_{\text{active}}$ and $x_{\text{inactive}}$ are the encoding's target values
+for the active and inactive channels, respectively (see Table~\ref{tab:encodings}).
+A value $c_{ij}=1$ indicates a perfectly sharp one-hot; $c_{ij}=0$ indicates a
+completely flat distribution.
+The decoded integer is $\hat{y}_{ij} = \arg\max_k x_{ijk}$ (no threshold applied
+for this analysis).
+
+\begin{table}[h]
+\centering
+\small
+\begin{tabular}{lccc}
+\toprule
+Variant & $x_{\text{active}}$ & $x_{\text{inactive}}$ & $\sigma_{\text{data}}$ (RMS) \\
+\midrule
+$\{-1,+1\}$ (pm1) & $1.0$ & $-1.0$ & $1.000$ \\
+$\{0,1\}$ (zero\_one) & $1.0$ & $0.0$ & $0.408$ \\
+zero-mean & $(n-1)/n$ & $-1/n$ & $0.373$ \\
+\bottomrule
+\end{tabular}
+\caption{One-hot encoding variants and their EDM $\sigma_{\text{data}}$ values.}
+\label{tab:encodings}
+\end{table}
+
+\paragraph{Scalar encoding.}
+The model outputs a scalar per cell.
+Valid quantization levels are $v_k = k/(n-1)$ for $k=0,\ldots,n-1$.
+Per-cell confidence is
+\begin{equation}
+  c_{ij} = 1 - \frac{\min_k |x_{ij} - v_k|}{\Delta/2},
+  \label{eq:scalar_conf}
+\end{equation}
+where $\Delta = 1/(n-1)$ is the level spacing.
+Here $c_{ij}=1$ means the cell lies exactly on a valid level; $c_{ij}=0$ at the
+midpoint between two levels; $c_{ij}<0$ means the cell is unsnappable.
+Samples where any cell is unsnappable (distance $> \varepsilon$, default $\varepsilon=0.15$)
+are excluded from analysis.
+
+\subsection{Error Cell Identification}
+
+A cell at grid position $(r,c)$ in sample $i$ is an \emph{error cell} if its decoded
+symbol appears more than once in row $r$ \emph{or} more than once in column $c$.
+Both copies of a duplicated symbol are flagged.
+
+Formally, define $\hat{y}_{i,r,c}$ as the decoded integer at position $(r,c)$.
+Then
+\begin{equation}
+  \text{err}_{i,r,c} = \mathbf{1}\!\left[
+    \sum_{c'} \mathbf{1}[\hat{y}_{i,r,c'} = \hat{y}_{i,r,c}] > 1
+    \;\vee\;
+    \sum_{r'} \mathbf{1}[\hat{y}_{i,r',c} = \hat{y}_{i,r,c}] > 1
+  \right].
+\end{equation}
+
+\subsection{Uncertainty Comparison}
+
+We define \emph{uncertainty} as $u_{ij} = 1 - c_{ij}$ and split all cells from the
+last $K$ checkpoints into correct cells ($\text{err}=0$) and error cells
+($\text{err}=1$). We compare their uncertainty distributions
+using histograms (zoomed to $[0, 0.10]$) and summary statistics.
+
+\subsection{Results}
+
+\input{errcell_uncertainty_n6_stats}
+
+Key findings: error cells have approximately $10\times$ higher uncertainty standard
+deviation and roughly $25\times$ lower rate of near-perfect confidence ($c > 0.99$)
+compared to correct cells.
+This signal is consistent across both one-hot and scalar encoding families,
+suggesting it reflects a genuine property of the model's learned representation
+rather than an artifact of the decoding scheme.
