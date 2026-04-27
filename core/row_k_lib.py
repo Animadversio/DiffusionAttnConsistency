@@ -318,101 +318,153 @@ def snap_to_binary(x_cont, eps=0.15):
 # Evaluation functions (continuous input from diffusion model)
 # ---------------------------------------------------------------------------
 
-def evaluate_row_k_samples(x_cont, n, K, eps=0.15):
-    """
-    Evaluate continuous diffusion samples against the row-K rule.
+def _base_snap(x_cont, n, eps):
+    """Shared snap + nan-filter logic. Returns (snapped_flat, nan_mask, non_nan_snapped)."""
+    x = np.asarray(x_cont).reshape(len(x_cont), -1)   # (N, n²)
+    snapped = snap_to_binary(x, eps=eps)
+    nan_mask = np.isnan(snapped).any(axis=1)
+    return snapped, nan_mask, snapped[~nan_mask].astype(int)
 
-    Parameters
-    ----------
-    x_cont : np.ndarray (N, n²) or (N, 1, n, n) — continuous model output
-    n      : int
-    K      : int
-    eps    : float — snap tolerance
+
+def _per_row_stats(snapped_valid, n, K_set):
+    """
+    Per-row statistics on non-nan snapped samples.
 
     Returns
     -------
-    dict with keys:
-      nan_ratio       : fraction of samples with any unsnappable cell
-      row_k_valid     : fraction of snapped samples satisfying row-K (conditional on non-nan)
-      full_valid_ratio: net valid fraction (non-nan AND row-K valid)
-      valid_int       : np.ndarray (M, n²) int  — snapped valid samples
+    counts         : (M, n) int   — active count per row
+    per_row_ok     : (M, n) bool  — each row independently satisfies the rule
+    per_row_ratio  : float        — fraction of (sample, row) pairs satisfying rule
+    k_hist         : dict {k: int}  — histogram of per-row active counts (all rows, all samples)
     """
-    x = np.asarray(x_cont).reshape(len(x_cont), -1)  # (N, n²)
-    snapped = snap_to_binary(x, eps=eps)
-    nan_mask = np.isnan(snapped).any(axis=1)
+    counts = per_row_counts(snapped_valid, n)                    # (M, n)
+    per_row_ok = np.array([[c in K_set for c in row] for row in counts])  # (M, n)
+    per_row_ratio = float(per_row_ok.mean())
+    k_hist = {int(k): int(v)
+              for k, v in zip(*np.unique(counts, return_counts=True))}
+    return counts, per_row_ok, per_row_ratio, k_hist
+
+
+def evaluate_row_k_samples(x_cont, n, K, eps=0.15):
+    """
+    Evaluate continuous diffusion samples against the row-K rule (fixed K).
+
+    Returns
+    -------
+    dict with keys
+      nan_ratio          : fraction of samples with any unsnappable cell
+      per_row_k_hist     : {k: count} histogram of active counts across all rows
+      per_row_valid_ratio: fraction of (sample, row) pairs satisfying K constraint
+      row_k_valid        : fraction of non-nan samples where ALL rows satisfy K (cond. on non-nan)
+      full_valid_ratio   : row_k_valid * (1 - nan_ratio)
+      valid_int          : (M, n²) int  snapped samples passing ALL-rows check
+    """
+    snapped, nan_mask, vs = _base_snap(x_cont, n, eps)
     nan_ratio = float(nan_mask.mean())
-
-    valid_snapped = snapped[~nan_mask].astype(int)
-    M = len(valid_snapped)
+    M = len(vs)
+    empty = dict(nan_ratio=nan_ratio, per_row_k_hist={}, per_row_valid_ratio=0.0,
+                 row_k_valid=0.0, full_valid_ratio=0.0, valid_int=vs)
     if M == 0:
-        return dict(nan_ratio=nan_ratio, row_k_valid=0.0,
-                    full_valid_ratio=0.0, valid_int=valid_snapped)
+        return empty
 
-    ok = check_row_k_batch(valid_snapped, n, K)
+    K_set = {K}
+    counts, per_row_ok, per_row_ratio, k_hist = _per_row_stats(vs, n, K_set)
+    sample_ok = per_row_ok.all(axis=1)
+
     return dict(
         nan_ratio=nan_ratio,
-        row_k_valid=float(ok.mean()),
-        full_valid_ratio=float(ok.mean() * (1 - nan_ratio)),
-        valid_int=valid_snapped[ok],
+        per_row_k_hist=k_hist,
+        per_row_valid_ratio=per_row_ratio,
+        row_k_valid=float(sample_ok.mean()),
+        full_valid_ratio=float(sample_ok.mean() * (1 - nan_ratio)),
+        valid_int=vs[sample_ok],
     )
 
 
 def evaluate_row_variable_k_samples(x_cont, n, K_list, eps=0.15):
     """
     Evaluate against row-variable-K rule (each row K ∈ K_list independently).
+
+    Returns
+    -------
+    dict with keys
+      nan_ratio          : fraction of samples with any unsnappable cell
+      per_row_k_hist     : {k: count} histogram of active counts across all rows
+      per_row_valid_ratio: fraction of (sample, row) pairs with count ∈ K_list
+      row_var_k_valid    : fraction of non-nan samples where ALL rows satisfy rule
+      full_valid_ratio   : row_var_k_valid * (1 - nan_ratio)
+      valid_int          : (M, n²) int  snapped samples passing ALL-rows check
     """
-    x = np.asarray(x_cont).reshape(len(x_cont), -1)
-    snapped = snap_to_binary(x, eps=eps)
-    nan_mask = np.isnan(snapped).any(axis=1)
+    snapped, nan_mask, vs = _base_snap(x_cont, n, eps)
     nan_ratio = float(nan_mask.mean())
-
-    valid_snapped = snapped[~nan_mask].astype(int)
-    M = len(valid_snapped)
+    M = len(vs)
+    empty = dict(nan_ratio=nan_ratio, per_row_k_hist={}, per_row_valid_ratio=0.0,
+                 row_var_k_valid=0.0, full_valid_ratio=0.0, valid_int=vs)
     if M == 0:
-        return dict(nan_ratio=nan_ratio, row_var_k_valid=0.0,
-                    full_valid_ratio=0.0, valid_int=valid_snapped)
+        return empty
 
-    ok = check_row_variable_k_batch(valid_snapped, n, K_list)
-    # also compute per-K breakdown
-    counts = per_row_counts(valid_snapped, n)   # (M, n)
     K_set = set(K_list)
-    per_k = {k: float((counts == k).all(axis=1).mean()) for k in K_list}
+    counts, per_row_ok, per_row_ratio, k_hist = _per_row_stats(vs, n, K_set)
+    sample_ok = per_row_ok.all(axis=1)
 
     return dict(
         nan_ratio=nan_ratio,
-        row_var_k_valid=float(ok.mean()),
-        full_valid_ratio=float(ok.mean() * (1 - nan_ratio)),
-        per_k_valid=per_k,
-        valid_int=valid_snapped[ok],
+        per_row_k_hist=k_hist,
+        per_row_valid_ratio=per_row_ratio,
+        row_var_k_valid=float(sample_ok.mean()),
+        full_valid_ratio=float(sample_ok.mean() * (1 - nan_ratio)),
+        valid_int=vs[sample_ok],
     )
 
 
 def evaluate_global_k_samples(x_cont, n, K_list, eps=0.15):
     """
-    Evaluate against global-K rule (all rows same K, K ∈ K_list).
-    Also reports per-K breakdown of valid samples.
+    Evaluate against global-K rule (all rows share same K, K ∈ K_list).
+
+    Returns
+    -------
+    dict with keys
+      nan_ratio           : fraction of samples with any unsnappable cell
+      per_row_k_hist      : {k: count} histogram of active counts across all rows
+      per_row_valid_ratio : fraction of (sample, row) pairs with count ∈ K_list
+      row_consistency     : fraction of non-nan samples where ALL rows have same count
+                            (regardless of K_list membership)
+      global_k_valid      : fraction of non-nan samples satisfying global-K rule
+      full_valid_ratio    : global_k_valid * (1 - nan_ratio)
+      per_k_breakdown     : {k: count} of valid samples that used each K value
+      valid_int           : (M, n²) int  snapped samples passing global-K check
     """
-    x = np.asarray(x_cont).reshape(len(x_cont), -1)
-    snapped = snap_to_binary(x, eps=eps)
-    nan_mask = np.isnan(snapped).any(axis=1)
+    snapped, nan_mask, vs = _base_snap(x_cont, n, eps)
     nan_ratio = float(nan_mask.mean())
-
-    valid_snapped = snapped[~nan_mask].astype(int)
-    M = len(valid_snapped)
+    M = len(vs)
+    empty = dict(nan_ratio=nan_ratio, per_row_k_hist={}, per_row_valid_ratio=0.0,
+                 row_consistency=0.0, global_k_valid=0.0, full_valid_ratio=0.0,
+                 per_k_breakdown={k: 0 for k in K_list}, valid_int=vs)
     if M == 0:
-        return dict(nan_ratio=nan_ratio, global_k_valid=0.0,
-                    full_valid_ratio=0.0, valid_int=valid_snapped,
-                    per_k_valid={})
+        return empty
 
-    ok, k_used = check_global_k_batch(valid_snapped, n, K_list)
-    per_k = {k: int((k_used[ok] == k).sum()) for k in K_list}
+    K_set = set(K_list)
+    counts, per_row_ok, per_row_ratio, k_hist = _per_row_stats(vs, n, K_set)
+
+    # row_consistency: all rows in a sample have the same count (any count)
+    row_counts_min = counts.min(axis=1)
+    row_counts_max = counts.max(axis=1)
+    consistent = (row_counts_min == row_counts_max)
+
+    # global_k_valid: consistent AND the shared count is in K_list
+    global_ok, k_used = check_global_k_batch(vs, n, K_list)
+
+    per_k = {k: int((k_used[global_ok] == k).sum()) for k in K_list}
 
     return dict(
         nan_ratio=nan_ratio,
-        global_k_valid=float(ok.mean()),
-        full_valid_ratio=float(ok.mean() * (1 - nan_ratio)),
-        per_k_valid=per_k,
-        valid_int=valid_snapped[ok],
+        per_row_k_hist=k_hist,
+        per_row_valid_ratio=per_row_ratio,
+        row_consistency=float(consistent.mean()),
+        global_k_valid=float(global_ok.mean()),
+        full_valid_ratio=float(global_ok.mean() * (1 - nan_ratio)),
+        per_k_breakdown=per_k,
+        valid_int=vs[global_ok],
     )
 
 
