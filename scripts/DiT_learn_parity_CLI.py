@@ -298,7 +298,7 @@ os.makedirs(ckpt_dir, exist_ok=True)
 
 #%%
 loss_store = {}
-def sampling_eval_callback_fn(epoch, loss, model):
+def sampling_eval_callback_fn(epoch, loss, model, grad_norm=None):
     loss_store[epoch] = loss
     x_out_batches = []
     if eval_fix_noise_seed:

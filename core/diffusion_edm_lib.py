@@ -182,6 +182,11 @@ def train_score_model_custom_loss(X_train_tsr, score_model_td, loss_fn,
         loss = loss.mean()
         optim.zero_grad()
         loss.backward()
+        # Compute grad norm only at callback steps (avoid per-step overhead)
+        grad_norm = None
+        if callback is not None and check_callback_step(ep):
+            grad_norm = torch.nn.utils.clip_grad_norm_(
+                score_model_td.parameters(), max_norm=float('inf')).item()
         optim.step()
         pbar.set_description(f"step {ep} loss {loss.item():.3f}")
         if ep == 0:
@@ -190,7 +195,7 @@ def train_score_model_custom_loss(X_train_tsr, score_model_td, loss_fn,
 
         # Invoke callback if specified and if epoch matches the frequency
         if callback is not None and check_callback_step(ep):
-            callback(epoch=ep + 1, loss=loss.item(), model=score_model_td)
+            callback(epoch=ep + 1, loss=loss.item(), model=score_model_td, grad_norm=grad_norm)
         
         if save_ckpts and (ep in save_ckpt_step_list or ep == nepochs - 1 or ep == 0):
             torch.save(score_model_td.state_dict(), f"{ckpt_dir}/model_epoch_{ep:06d}.pth")

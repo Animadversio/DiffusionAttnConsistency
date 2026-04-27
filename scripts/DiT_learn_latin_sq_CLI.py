@@ -204,7 +204,7 @@ writer = SummaryWriter(log_dir=f"{savedir}/tensorboard")
 # %%
 loss_store = {}
 
-def sampling_eval_callback_fn(epoch, loss, model):
+def sampling_eval_callback_fn(epoch, loss, model, grad_norm=None):
     loss_store[epoch] = loss
     x_out_batches = []
     if eval_fix_noise_seed:
@@ -283,6 +283,8 @@ def sampling_eval_callback_fn(epoch, loss, model):
 
     # TensorBoard logging
     writer.add_scalar("train/loss",                loss,              epoch)
+    if grad_norm is not None:
+        writer.add_scalar("train/grad_norm",       grad_norm,         epoch)
     writer.add_scalar("eval/full_valid_ratio",     full_valid_ratio,  epoch)
     writer.add_scalar("eval/row_valid_ratio",      row_valid_ratio,   epoch)
     writer.add_scalar("eval/col_valid_ratio",      col_valid_ratio,   epoch)
