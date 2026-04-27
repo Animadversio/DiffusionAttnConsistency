@@ -59,18 +59,22 @@ LATINSQ_EXPS = [
 # Per-experiment analysis
 # ---------------------------------------------------------------------------
 
-def load_last_samples(exp_dir, epoch=None):
-    """Load sample tensor from exp_dir/samples/. If epoch is None, load last file."""
+def load_last_samples(exp_dir, epoch=None, n_avg_ckpts=1):
+    """Load and concatenate the last n_avg_ckpts sample tensors from exp_dir/samples/."""
     sdir = os.path.join(exp_dir, "samples")
     pt_files = sorted(glob.glob(os.path.join(sdir, "samples_epoch_*.pt")))
     if not pt_files:
         raise FileNotFoundError(f"No .pt files in {sdir}")
-    if epoch is None:
-        fpath = pt_files[-1]
-    else:
+    if epoch is not None:
         fpath = os.path.join(sdir, f"samples_epoch_{epoch:06d}.pt")
-    step = int(os.path.basename(fpath).replace("samples_epoch_","").replace(".pt",""))
-    x = torch.load(fpath, map_location="cpu", weights_only=False)
+        step = epoch
+        x = torch.load(fpath, map_location="cpu", weights_only=False)
+        return x, step
+
+    selected = pt_files[-n_avg_ckpts:]
+    step = int(os.path.basename(selected[-1]).replace("samples_epoch_","").replace(".pt",""))
+    xs = [torch.load(f, map_location="cpu", weights_only=False) for f in selected]
+    x = torch.cat(xs, dim=0)
     return x, step
 
 
@@ -129,10 +133,11 @@ def analyze_latinsq(x, n, enc):
 # Plotting — exact-K
 # ---------------------------------------------------------------------------
 
-def plot_exactK_errors(results, ks, outpath):
+def plot_exactK_errors(results, ks, outpath, n_avg_ckpts=1):
     colors_k = plt.cm.plasma(np.linspace(0.1, 0.9, len(ks)))
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
-    fig.suptitle("Exact-K Error Analysis — Final Checkpoint", fontsize=13, fontweight='bold')
+    ckpt_label = f"last {n_avg_ckpts} ckpts avg" if n_avg_ckpts > 1 else "final checkpoint"
+    fig.suptitle(f"Exact-K Error Analysis — {ckpt_label}", fontsize=13, fontweight='bold')
 
     # Panel 0: ones distribution
     ax = axes[0]
@@ -143,6 +148,8 @@ def plot_exactK_errors(results, ks, outpath):
     ax.set_xlabel("Number of Ones"); ax.set_ylabel("% samples")
     ax.set_title("Ones Count Distribution\n(errors always off-by-one)")
     ax.legend(fontsize=7, ncol=2); ax.grid(alpha=0.3, axis='y')
+    all_ones = np.concatenate([r["ones_counts"] for r in results])
+    ax.set_xticks(range(int(all_ones.min()), int(all_ones.max()) + 1))
 
     # Panel 1: accuracy bar
     ax = axes[1]
@@ -278,6 +285,8 @@ def main():
     parser.add_argument("--saveroot",  type=str,
                         default="/n/holylfs06/LABS/kempner_fellow_binxuwang/Users/binxuwang/DL_Projects/DiffusionParityLearning")
     parser.add_argument("--outpath",   type=str, default="/tmp/sample_errors.png")
+    parser.add_argument("--n_avg_ckpts", type=int, default=1,
+                        help="Average over last N checkpoints (default: 1 = last only)")
     parser.add_argument("--epoch",     type=int, default=None,
                         help="Epoch to load; if None, uses last checkpoint")
     args = parser.parse_args()
@@ -288,10 +297,10 @@ def main():
         results = []
         for e in exps:
             exp_dir = os.path.join(args.saveroot, e["name"])
-            x, step = load_last_samples(exp_dir, args.epoch)
+            x, step = load_last_samples(exp_dir, args.epoch, args.n_avg_ckpts)
             print(f"{e['name']}: step={step}")
             results.append(analyze_exactK(x, e["k"]))
-        plot_exactK_errors(results, ks, args.outpath)
+        plot_exactK_errors(results, ks, args.outpath, args.n_avg_ckpts)
 
     elif args.group == "latinsq":
         exps = LATINSQ_EXPS
@@ -299,7 +308,7 @@ def main():
         for e in exps:
             exp_dir = os.path.join(args.saveroot, e["name"])
             try:
-                x, step = load_last_samples(exp_dir, args.epoch)
+                x, step = load_last_samples(exp_dir, args.epoch, args.n_avg_ckpts)
             except FileNotFoundError:
                 print(f"Skipping {e['name']} — no samples found")
                 continue
@@ -318,7 +327,7 @@ def main():
             labels, ns, encs, results = [], [], [], []
             for exp_name, enc, n in zip(args.exp_names, args.enc_types, args.ns):
                 exp_dir = os.path.join(args.saveroot, exp_name)
-                x, step = load_last_samples(exp_dir, args.epoch)
+                x, step = load_last_samples(exp_dir, args.epoch, args.n_avg_ckpts)
                 print(f"{exp_name}: step={step}")
                 results.append(analyze_latinsq(x, n, enc))
                 labels.append(exp_name); ns.append(n); encs.append(enc)
@@ -327,7 +336,7 @@ def main():
             results = []
             for exp_name, k in zip(args.exp_names, args.ks):
                 exp_dir = os.path.join(args.saveroot, exp_name)
-                x, step = load_last_samples(exp_dir, args.epoch)
+                x, step = load_last_samples(exp_dir, args.epoch, args.n_avg_ckpts)
                 print(f"{exp_name}: step={step}")
                 results.append(analyze_exactK(x, k))
             plot_exactK_errors(results, args.ks, args.outpath)
