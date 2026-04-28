@@ -1,3 +1,25 @@
+"""
+DiT score model training script for group-parity datasets.
+
+Change log
+----------
+2026-04-28 (rep2 update):
+  - Added TensorBoard logging (--use_tensorboard flag, --tb_log_every arg).
+    Writer is created at {savedir}/tensorboard/ and closed after training.
+  - Upgraded sampling_eval_callback_fn:
+      * Replaced global parity check with correct per-group check
+        (reshape to (N, num_groups, group_size), parity_func per group).
+        Previously used parity_func(x.flatten(), axis=1) which computed
+        global 36-bit parity — a soft proxy that undercounts failures for G<36.
+      * Added compute_membership_counts() → sample_mem_ratio, bitgroup_mem_ratio
+        (borrowed from parity_memorization_eval_cli.py).
+      * Added NaN ratio (eps=1e-1) for ambiguous-quantization tracking.
+      * All metrics logged to TensorBoard at eval callback steps:
+          Eval/PerGroup_Accuracy, Eval/Sample_Accuracy,
+          Eval/Sample_Mem_Ratio, Eval/BitGroup_Mem_Ratio,
+          Eval/NaN_Ratio, Eval/GradNorm, Training/Loss.
+  - Loss and grad_norm logged at eval callback steps (no per-step overhead).
+"""
 
 # %%
 import sys
@@ -25,6 +47,8 @@ from core.DiT_model_lib import *
 from core.parity_lib import sample_group_parity_vec, sample_ensuring_uniqueness, parity_func, round_to_pos_neg_one
 # from core.dataset_lib import load_dataset
 from circuit_toolkit.plot_utils import saveallforms, to_imgrid, show_imgrid
+from torch.utils.tensorboard import SummaryWriter
+from scripts.parity_memorization_eval_cli import compute_membership_counts
 
 
 def get_device():
@@ -226,6 +250,9 @@ def parse_args():
     )
     parser.add_argument("--save_ckpts", action="store_true", help="Save checkpoint trajectory")
     parser.add_argument("--num_ckpts", type=int, default=100, help="Number of checkpoints")
+    parser.add_argument("--use_tensorboard", action="store_true", help="Enable TensorBoard logging")
+    parser.add_argument("--tb_log_every", type=int, default=10,
+                        help="Log training loss/grad_norm to TB every N steps (0=disabled)")
     return parser.parse_args()
 
 # %%
@@ -268,6 +295,8 @@ record_frequency = args.record_frequency
 record_step_range = args.record_step_range
 save_ckpts = args.save_ckpts
 num_ckpts = args.num_ckpts
+use_tensorboard = args.use_tensorboard
+tb_log_every = args.tb_log_every
 ckpt_step_list = generate_ckpt_step_list(nsteps, num_ckpts=num_ckpts, sequence="geomspace")
 if args.record_step_range is None or len(args.record_step_range) == 0:
     print("using default record step range")
@@ -292,12 +321,19 @@ saveroot = f"/n/holylfs06/LABS/kempner_fellow_binxuwang/Users/binxuwang/DL_Proje
 savedir = f"{saveroot}/{exp_name}"
 sample_dir = f"{savedir}/samples"
 ckpt_dir = f"{savedir}/ckpts"
-os.makedirs(savedir, exist_ok=True) 
+os.makedirs(savedir, exist_ok=True)
 os.makedirs(sample_dir, exist_ok=True)
 os.makedirs(ckpt_dir, exist_ok=True)
+tb_dir = f"{savedir}/tensorboard"
+os.makedirs(tb_dir, exist_ok=True)
+tb_writer = SummaryWriter(tb_dir) if use_tensorboard else None
+if tb_writer is not None:
+    print(f"TensorBoard logging enabled → {tb_dir}")
 
 #%%
 loss_store = {}
+num_groups = sample_len // group_size
+
 def sampling_eval_callback_fn(epoch, loss, model, grad_norm=None):
     loss_store[epoch] = loss
     x_out_batches = []
@@ -308,25 +344,54 @@ def sampling_eval_callback_fn(epoch, loss, model, grad_norm=None):
     for i in range(0, eval_sample_size, eval_batch_size):
         batch_size_i = min(eval_batch_size, eval_sample_size - i)
         noise_init = noise_init_all[i:i+batch_size_i].to(device)
-        x_out_i = edm_sampler(model, noise_init, num_steps=eval_sampling_steps, 
+        x_out_i = edm_sampler(model, noise_init, num_steps=eval_sampling_steps,
                         sigma_min=0.002, sigma_max=80, rho=7, return_traj=False)
-        # x_out_i, x_traj_i, x0hat_traj_i, t_steps_i = edm_sampler(model, noise_init,
-        #                 num_steps=eval_sampling_steps, sigma_min=0.002, sigma_max=80, rho=7, return_traj=True)
         x_out_batches.append(x_out_i)
-    
+
     x_out = torch.cat(x_out_batches, dim=0)
-    # sample_store[epoch] = x_out.cpu(), # x_traj.cpu(), x0hat_traj.cpu(), t_steps.cpu()
     torch.save(x_out, f"{sample_dir}/samples_epoch_{epoch:06d}.pt")
     mtg = to_imgrid(((x_out.cpu()[:64] + 1) / 2).clamp(0, 1), nrow=8, padding=1)
     mtg.save(f"{sample_dir}/samples_epoch_{epoch:06d}.png")
-        
+
+    # ── Validity: per-group parity check (correct for all G) ──────────────────
     sample_tsr_int = round_to_pos_neg_one(x_out, eps=1e-1)
-    sample_eval_parity = parity_func(sample_tsr_int.flatten(1), axis=1)
-    sample_num = len(sample_eval_parity)
-    even_parity_num = th.sum(sample_eval_parity == 0).item()
-    odd_parity_num = th.sum(sample_eval_parity == 1).item()
-    nan_num = th.sum(th.isnan(sample_eval_parity)).item()
-    print(f"epoch: {epoch:06d} | Even parity: {even_parity_num}, Odd parity: {odd_parity_num} nan: {nan_num}| total: {sample_num}")
+    n_eval = sample_tsr_int.shape[0]
+
+    # NaN ratio (ambiguous quantization)
+    row_sum = sample_tsr_int.flatten(1).sum(dim=1)
+    nan_num = th.isnan(row_sum).sum().item()
+    nan_ratio = nan_num / n_eval
+
+    # Per-group parity: reshape → (N, num_groups, group_size)
+    sample_pergroup = sample_tsr_int.reshape(n_eval, num_groups, group_size)
+    group_parity = parity_func(sample_pergroup, axis=-1)   # (N, num_groups)
+    pergroup_correct = th.sum(group_parity == parity).item()
+    pergroup_acc = pergroup_correct / (n_eval * num_groups)
+    sample_correct = th.all(group_parity == parity, dim=1).sum().item()
+    sample_acc = sample_correct / n_eval
+
+    # ── Memorization ──────────────────────────────────────────────────────────
+    gen_int = sample_tsr_int.to(int).flatten(1).cpu()
+    mem_stats = compute_membership_counts(Xtsr.flatten(1).cpu(), gen_int, group_size)
+
+    print(f"epoch: {epoch:06d} | "
+          f"PerGroup acc: {pergroup_acc:.3f} [{pergroup_correct}/{n_eval*num_groups}]  "
+          f"Sample acc: {sample_acc:.3f} [{sample_correct}/{n_eval}]  |  "
+          f"BitGroup mem: {mem_stats['bitgroup_mem_ratio']:.3f}  "
+          f"Sample mem: {mem_stats['sample_mem_ratio']:.3f}  |  "
+          f"NaN: {nan_ratio:.4f}  "
+          + (f"GradNorm: {grad_norm:.4f}" if grad_norm is not None else ""))
+
+    # ── TensorBoard ───────────────────────────────────────────────────────────
+    if tb_writer is not None:
+        tb_writer.add_scalar('Eval/PerGroup_Accuracy',   pergroup_acc,                    epoch)
+        tb_writer.add_scalar('Eval/Sample_Accuracy',     sample_acc,                      epoch)
+        tb_writer.add_scalar('Eval/Sample_Mem_Ratio',    mem_stats['sample_mem_ratio'],   epoch)
+        tb_writer.add_scalar('Eval/BitGroup_Mem_Ratio',  mem_stats['bitgroup_mem_ratio'], epoch)
+        tb_writer.add_scalar('Eval/NaN_Ratio',           nan_ratio,                       epoch)
+        tb_writer.add_scalar('Training/Loss',            loss,                            epoch)
+        if grad_norm is not None:
+            tb_writer.add_scalar('Eval/GradNorm', grad_norm, epoch)
     
 
 
@@ -390,6 +455,10 @@ x_out, x_traj, x0hat_traj, t_steps = edm_sampler(model_precd, noise_init,
                 num_steps=40, sigma_min=0.002, sigma_max=80, rho=7, return_traj=True)
 mtg = to_imgrid(((x_out.cpu()[:]+1)/2).clamp(0, 1), nrow=8, padding=1)
 mtg.save(f"{savedir}/learned_samples_final.png")
+
+if tb_writer is not None:
+    tb_writer.close()
+    print(f"TensorBoard logs saved to: {tb_dir}")
 # %%
 
 
