@@ -115,8 +115,9 @@ echo "$param_name"
 
 # load modules
 module load python
-mamba deactivate
-mamba activate torch2
+unset CONDA_PREFIX CONDA_DEFAULT_ENV MAMBA_ROOT_PREFIX
+mamba deactivate 2>/dev/null || true
+mamba activate torch2 2>/dev/null || true
 export PATH="$HOME/.conda/envs/torch2/bin:${PATH}"
 which python
 
