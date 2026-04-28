@@ -59,7 +59,15 @@ param_list=\
 --sample_num 32768 --sample_len 36 --group_size 9  --parity 0 --exp_name GPT_B_parity_N32768_D36_G9_even   --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000 
 --sample_num 32768 --sample_len 36 --group_size 12 --parity 0 --exp_name GPT_B_parity_N32768_D36_G12_even   --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000 
 --sample_num 32768 --sample_len 36 --group_size 18 --parity 0 --exp_name GPT_B_parity_N32768_D36_G18_even   --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000 
---sample_num 32768 --sample_len 36 --group_size 36 --parity 0 --exp_name GPT_B_parity_N32768_D36_G36_even   --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000 
+--sample_num 32768 --sample_len 36 --group_size 36 --parity 0 --exp_name GPT_B_parity_N32768_D36_G36_even   --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000
+--sample_num 4096  --sample_len 36 --group_size 2  --parity 0 --exp_name GPT_B_parity_N4096_D36_G2_even    --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000
+--sample_num 4096  --sample_len 36 --group_size 3  --parity 0 --exp_name GPT_B_parity_N4096_D36_G3_even    --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000
+--sample_num 4096  --sample_len 36 --group_size 4  --parity 0 --exp_name GPT_B_parity_N4096_D36_G4_even    --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000
+--sample_num 4096  --sample_len 36 --group_size 6  --parity 0 --exp_name GPT_B_parity_N4096_D36_G6_even    --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000
+--sample_num 4096  --sample_len 36 --group_size 9  --parity 0 --exp_name GPT_B_parity_N4096_D36_G9_even    --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000
+--sample_num 4096  --sample_len 36 --group_size 12 --parity 0 --exp_name GPT_B_parity_N4096_D36_G12_even   --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000
+--sample_num 4096  --sample_len 36 --group_size 18 --parity 0 --exp_name GPT_B_parity_N4096_D36_G18_even   --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000
+--sample_num 4096  --sample_len 36 --group_size 36 --parity 0 --exp_name GPT_B_parity_N4096_D36_G36_even   --n_embd 768 --n_layer 12 --n_head 12 --nsteps 100000
 '
 # --sample_num 8192  --sample_len 36 --group_size 2  --parity 0  --exp_name GPT_mini_parity_N8192_D36_G2_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
 # --sample_num 8192  --sample_len 36 --group_size 3  --parity 0  --exp_name GPT_mini_parity_N8192_D36_G3_even   --n_embd 384 --n_layer 6 --n_head 6 --nsteps 100000 
