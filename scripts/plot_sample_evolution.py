@@ -1,0 +1,351 @@
+"""
+Generate sample evolution plots for one experiment.
+
+Produces three figures:
+  1. evolution_overview.png       — change rate, bits flipped, valid/mem, confidence, arrival CDF
+  2. state_transitions.png        — 4-state stacked area + 6 transition curves (EMA) + late zoom
+  3. state_raster_4state.png      — per-sample state raster (4-state, sorted, log-x)
+
+Usage:
+  python scripts/plot_sample_evolution.py --exp_name DiT_mini_rowK2_n6_N4096
+  python scripts/plot_sample_evolution.py --exp_name DiT_mini_globalK15_n6_N4096 --figdir /tmp/figs
+"""
+
+import os, sys, argparse
+import numpy as np
+import matplotlib as mpl
+import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
+from matplotlib.patches import Patch
+
+mpl.rcParams['pdf.fonttype'] = 42
+mpl.rcParams['axes.spines.right'] = False
+mpl.rcParams['axes.spines.top']   = False
+plt.rcParams['figure.dpi'] = 120
+
+DEFAULT_SAVEROOT = (
+    "/n/holylfs06/LABS/kempner_fellow_binxuwang/Users/binxuwang/"
+    "DL_Projects/DiffusionParityLearning"
+)
+DEFAULT_FIGDIR = (
+    "/n/home12/binxuwang/Github/DiffusionAttnConsistency/figures/rowK_analysis"
+)
+
+# ── State definitions ─────────────────────────────────────────────────────────
+# 0 = Invalid + quant ambiguous  (|x|<0.1 for ≥1 bit)  → orange
+# 1 = Invalid + clean quant (rule error only)           → red
+# 2 = Valid novel                                       → green
+# 3 = Valid & Memorized                                 → purple
+STATE_INFO = [
+    (0, 'Invalid (quant ambiguous)', '#ff7f0e'),
+    (1, 'Invalid (rule error)',      '#d62728'),
+    (2, 'Valid (novel)',             '#2ca02c'),
+    (3, 'Valid & Memorized',        '#9467bd'),
+]
+
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def ema(arr, alpha=0.9):
+    s = np.empty_like(arr, dtype=np.float32)
+    s[0] = arr[0]
+    for i in range(1, len(arr)):
+        s[i] = (1 - alpha) * arr[i] + alpha * s[i-1]
+    return s
+
+
+def load_data(exp_name, saveroot):
+    path = os.path.join(saveroot, exp_name, 'evolution_analysis', 'evolution_metrics.npz')
+    return np.load(path)
+
+
+def build_state(is_valid, is_mem, has_ambig):
+    T, N = is_valid.shape
+    state = np.zeros((T, N), dtype=np.int8)
+    state[~is_valid &  has_ambig] = 0
+    state[~is_valid & ~has_ambig] = 1
+    state[ is_valid & ~is_mem]    = 2
+    state[ is_valid &  is_mem]    = 3
+    return state
+
+
+def sort_state(state, is_valid, is_mem):
+    T, N = state.shape
+    first_mem   = np.full(N, np.inf)
+    first_valid = np.full(N, np.inf)
+    epochs_dummy = np.arange(T, dtype=float)
+    for t in range(T):
+        first_mem[np.isinf(first_mem)   & is_mem[t]]    = t
+        first_valid[np.isinf(first_valid) & is_valid[t]] = t
+    final_state = state[-1]
+    sort_key = np.lexsort((first_valid, first_mem, -final_state))
+    return state[:, sort_key], sort_key, final_state
+
+
+def pcolormesh_edges(epochs):
+    log_ep  = np.log10(epochs + 1)
+    mid     = (log_ep[:-1] + log_ep[1:]) / 2
+    x_edges = np.concatenate([[log_ep[0] - (mid[0] - log_ep[0])],
+                               mid,
+                               [log_ep[-1] + (log_ep[-1] - mid[-1])]])
+    return 10**x_edges
+
+
+def savefig(fig, figdir, name, exp_name):
+    tag = exp_name.replace('DiT_mini_', '')
+    for ext in ['png', 'pdf']:
+        fig.savefig(os.path.join(figdir, f'{name}_{tag}.{ext}'),
+                    dpi=150, bbox_inches='tight')
+
+
+# ── Figure 1: Overview ────────────────────────────────────────────────────────
+
+def plot_overview(d, exp_name, figdir):
+    epochs      = d['epochs']
+    change_rate = d['change_rate']
+    n_bits      = d['n_bits_changed']
+    is_valid    = d['is_valid']
+    is_mem      = d['is_mem']
+    has_ambig   = d['has_ambiguous']
+    confidence  = d['mean_confidence']
+    arrival     = d['arrival_epochs']
+    ep_mid      = (epochs[:-1] + epochs[1:]) / 2
+
+    fig, axes = plt.subplots(6, 1, figsize=(10, 18), sharex=True)
+    fig.suptitle(f"Sample evolution overview — {exp_name}", fontsize=11, fontweight='bold')
+
+    # 1. Change rate
+    ax = axes[0]
+    ax.plot(ep_mid + 1, change_rate, color='#1f77b4', lw=0.5, alpha=0.2)
+    ax.plot(ep_mid + 1, ema(change_rate), color='#1f77b4', lw=1.8)
+    ax.set_ylabel('Fraction changed\n(≥1 bit)', fontsize=9)
+    ax.set_ylim(0, 1); ax.grid(alpha=0.25)
+    ax.set_title('Sample change rate per transition', fontsize=9)
+
+    # 2. Mean bits changed (median + IQR)
+    ax = axes[1]
+    mean_nb = n_bits.mean(axis=1).astype(np.float32)
+    ax.plot(ep_mid + 1, mean_nb, color='#ff7f0e', lw=0.5, alpha=0.2)
+    ax.plot(ep_mid + 1, ema(mean_nb), color='#ff7f0e', lw=1.8)
+    ax.fill_between(ep_mid + 1,
+                    np.percentile(n_bits, 25, axis=1),
+                    np.percentile(n_bits, 75, axis=1),
+                    color='#ff7f0e', alpha=0.15)
+    ax.set_ylabel('Mean bits changed\n(25-75 pct band)', fontsize=9)
+    ax.grid(alpha=0.25)
+    ax.set_title('Bits flipped per sample per transition', fontsize=9)
+
+    # 3. Valid / Mem / Ambiguous
+    ax = axes[2]
+    ax.plot(epochs + 1, is_valid.mean(axis=1),  color='#2ca02c', lw=1.8, label='valid')
+    ax.plot(epochs + 1, is_mem.mean(axis=1),    color='#9467bd', lw=1.8, label='memorized')
+    ax.plot(epochs + 1, has_ambig.mean(axis=1), color='#ff7f0e', lw=1.2, ls='--',
+            label='has ambiguous bit (|x|<0.1)')
+    ax.set_ylim(0, 1); ax.grid(alpha=0.25)
+    ax.set_ylabel('Fraction of samples', fontsize=9)
+    ax.legend(fontsize=8, loc='center left')
+    ax.set_title('Validity / Memorization / Ambiguity over training', fontsize=9)
+
+    # 4. State counts stacked
+    state    = build_state(is_valid, is_mem, has_ambig)
+    counts   = np.stack([(state == s).sum(axis=1) for s, *_ in STATE_INFO], axis=1)
+    ax = axes[3]
+    ax.stackplot(epochs + 1,
+                 counts[:,0], counts[:,1], counts[:,2], counts[:,3],
+                 labels=[info[1] for info in STATE_INFO],
+                 colors=[info[2] for info in STATE_INFO], alpha=0.85)
+    ax.set_ylim(0, is_valid.shape[1])
+    ax.set_ylabel('# samples', fontsize=9); ax.grid(alpha=0.25)
+    ax.legend(fontsize=7, loc='upper left', ncol=2)
+    ax.set_title('4-state count: quant-ambiguous vs rule-error vs valid-novel vs memorized', fontsize=9)
+
+    # 5. Confidence
+    ax = axes[4]
+    ax.plot(epochs + 1, np.median(confidence, axis=1), color='#8c564b', lw=1.8, label='median')
+    ax.fill_between(epochs + 1,
+                    np.percentile(confidence, 10, axis=1),
+                    np.percentile(confidence, 90, axis=1),
+                    color='#8c564b', alpha=0.2, label='10-90 pct')
+    ax.set_ylabel('Mean |x|\n(confidence)', fontsize=9)
+    ax.legend(fontsize=8); ax.grid(alpha=0.25)
+    ax.set_title('Model confidence (mean |output|) per sample', fontsize=9)
+
+    # 6. Memorization arrival CDF
+    ax = axes[5]
+    seen = arrival[arrival >= 0]
+    not_seen_frac = (arrival == -1).mean()
+    all_ep_sorted = np.sort(seen)
+    cum = np.arange(1, len(all_ep_sorted) + 1) / len(arrival)
+    ax.plot(all_ep_sorted + 1, cum, color='#1f77b4', lw=1.8)
+    ax.axhline(1 - not_seen_frac, color='gray', ls='--', lw=1.0,
+               label=f'max reachable ({(1-not_seen_frac)*100:.0f}%)')
+    ax.set_ylim(0, 1); ax.grid(alpha=0.25)
+    ax.set_ylabel('Fraction of train patterns\never seen in samples', fontsize=9)
+    ax.set_xlabel('Training step', fontsize=10)
+    ax.legend(fontsize=8)
+    ax.set_title(f'Memorization arrival CDF  ({len(seen)}/{len(arrival)} ever seen)', fontsize=9)
+
+    for ax in axes:
+        ax.set_xscale('log')
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    savefig(fig, figdir, 'evolution_overview', exp_name)
+    plt.close(fig)
+    print(f"  Saved: evolution_overview")
+
+
+# ── Figure 2: State transitions ───────────────────────────────────────────────
+
+def plot_transitions(d, exp_name, figdir):
+    epochs   = d['epochs']
+    is_valid = d['is_valid']
+    is_mem   = d['is_mem']
+    has_ambig = d['has_ambiguous']
+    ep_mid   = (epochs[:-1] + epochs[1:]) / 2
+
+    state  = build_state(is_valid, is_mem, has_ambig)
+    T, N   = state.shape
+    counts = np.stack([(state == s).sum(axis=1) for s, *_ in STATE_INFO], axis=1)
+
+    # 6 transitions between the 3 "meaningful" states (0+1 merged as "invalid" for readability,
+    # but we keep all 4-state transitions)
+    trans_spec = {
+        (0,2): ('Ambig invalid→Valid novel',   '#aec7e8', '-',  1.6),
+        (0,3): ('Ambig invalid→Memorized',      '#c5b0d5', '-',  1.4),
+        (1,2): ('Rule-err→Valid novel',         '#2ca02c', '-',  2.0),
+        (1,3): ('Rule-err→Memorized',           '#9467bd', '-',  1.6),
+        (2,1): ('Valid novel→Rule-err',         '#d62728', '-',  2.0),
+        (2,3): ('Valid novel→Memorized',        '#ff7f0e', '-',  2.2),
+        (3,2): ('Memorized→Valid novel',        '#8c564b', '--', 1.8),
+        (3,1): ('Memorized→Rule-err',           '#e377c2', '--', 1.6),
+    }
+    transitions = {k: ((state[:-1] == k[0]) & (state[1:] == k[1])).sum(axis=1).astype(np.float32)
+                   for k in trans_spec}
+
+    fig, axes = plt.subplots(3, 1, figsize=(11, 13), sharex=True)
+    fig.suptitle(f"State transitions — {exp_name}", fontsize=11, fontweight='bold')
+
+    # Panel 1: stacked area (4-state)
+    ax = axes[0]
+    ax.stackplot(epochs + 1,
+                 counts[:,0], counts[:,1], counts[:,2], counts[:,3],
+                 labels=[info[1] for info in STATE_INFO],
+                 colors=[info[2] for info in STATE_INFO], alpha=0.85)
+    ax.set_ylim(0, N); ax.set_ylabel('# samples', fontsize=9); ax.grid(alpha=0.2)
+    ax.legend(fontsize=8, loc='upper left', ncol=2)
+    ax.set_title('State counts (stacked)', fontsize=10)
+
+    # Panel 2: all transitions, raw faint + EMA bold
+    ax = axes[1]
+    for k, (lbl, col, ls, lw) in trans_spec.items():
+        y = transitions[k]
+        ax.plot(ep_mid + 1, y,      color=col, lw=0.5, ls=ls, alpha=0.12)
+        ax.plot(ep_mid + 1, ema(y), color=col, lw=lw,  ls=ls, alpha=1.0, label=lbl)
+    ax.set_ylabel('# samples / transition', fontsize=9); ax.grid(alpha=0.2)
+    ax.legend(fontsize=7, loc='upper right', ncol=2)
+    ax.set_title('All transitions (EMA smoothed, α=0.9)', fontsize=10)
+
+    # Panel 3: zoom late (>100k)
+    ax = axes[2]
+    mask = ep_mid >= 1e5
+    for k, (lbl, col, ls, lw) in trans_spec.items():
+        y = transitions[k]
+        ax.plot(ep_mid[mask] + 1, y[mask],       color=col, lw=0.5, ls=ls, alpha=0.12)
+        ax.plot(ep_mid[mask] + 1, ema(y)[mask],  color=col, lw=lw,  ls=ls, alpha=1.0, label=lbl)
+    ax.set_ylabel('# samples / transition', fontsize=9)
+    ax.set_xlabel('Training step', fontsize=10); ax.grid(alpha=0.2)
+    ax.legend(fontsize=7, loc='upper left', ncol=2)
+    ax.set_title('Zoom: late-training transitions (step > 100k, EMA smoothed)', fontsize=10)
+
+    for ax in axes:
+        ax.set_xscale('log')
+    plt.tight_layout(rect=[0, 0, 1, 0.97])
+    savefig(fig, figdir, 'state_transitions', exp_name)
+    plt.close(fig)
+    print(f"  Saved: state_transitions")
+
+
+# ── Figure 3: Per-sample raster ───────────────────────────────────────────────
+
+def plot_raster(d, exp_name, figdir):
+    epochs    = d['epochs']
+    is_valid  = d['is_valid']
+    is_mem    = d['is_mem']
+    has_ambig = d['has_ambiguous']
+    T, N      = is_valid.shape
+
+    state = build_state(is_valid, is_mem, has_ambig)
+    state_sorted, sort_key, final_state = sort_state(state, is_valid, is_mem)
+
+    x_lin   = pcolormesh_edges(epochs)
+    y_edges = np.arange(N + 1)
+
+    cmap = mcolors.ListedColormap([info[2] for info in STATE_INFO])
+    norm = mcolors.BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], cmap.N)
+
+    counts = np.stack([(state == s).sum(axis=1) for s, *_ in STATE_INFO], axis=1)
+
+    fig, axes = plt.subplots(2, 1, figsize=(13, 10),
+                              gridspec_kw={'height_ratios': [1.5, 3]})
+    fig.suptitle(f"Per-sample state raster — {exp_name}", fontsize=11, fontweight='bold')
+
+    # Panel 1: stacked area
+    ax = axes[0]
+    ax.stackplot(epochs + 1,
+                 counts[:,0], counts[:,1], counts[:,2], counts[:,3],
+                 labels=[info[1] for info in STATE_INFO],
+                 colors=[info[2] for info in STATE_INFO], alpha=0.85)
+    ax.set_ylim(0, N); ax.set_ylabel('# samples', fontsize=9)
+    ax.set_xscale('log'); ax.set_xlim(x_lin[0], x_lin[-1])
+    ax.legend(fontsize=8, loc='upper left', ncol=2); ax.grid(alpha=0.2)
+    ax.set_title('State counts (stacked) — orange=quant ambiguous, red=rule error', fontsize=9)
+
+    # Panel 2: raster
+    ax = axes[1]
+    ax.pcolormesh(x_lin, y_edges, state_sorted.T.astype(float),
+                  cmap=cmap, norm=norm, rasterized=True)
+    ax.set_xscale('log')
+    ax.set_xlim(x_lin[0], x_lin[-1]); ax.set_ylim(0, N)
+    ax.set_xlabel('Training step', fontsize=10)
+    ax.set_ylabel('Sample index\n(sorted: final state ↓, first mem ↑, first valid ↑)', fontsize=9)
+    ax.set_title('Per-sample state trajectory — each row = same noise seed across training', fontsize=9)
+
+    # Dividers and annotations
+    y_cursor = 0
+    for s_id, lbl, col in [(3,'Memorized','#9467bd'), (2,'Valid novel','#2ca02c'),
+                             (1,'Invalid (rule)','#d62728'), (0,'Invalid (ambig)','#ff7f0e')]:
+        count = int((final_state[sort_key] == s_id).sum())
+        ax.axhline(y_cursor + count, color='white', lw=1.0, ls='--', alpha=0.7)
+        if count > 0:
+            ax.annotate(f'{lbl}\n({count})',
+                        xy=(1.005, (y_cursor + count / 2) / N), xycoords='axes fraction',
+                        fontsize=8, color=col, va='center')
+        y_cursor += count
+
+    legend_els = [Patch(color=info[2], label=info[1]) for info in STATE_INFO]
+    ax.legend(handles=legend_els, fontsize=8, loc='upper left', framealpha=0.7)
+
+    plt.tight_layout()
+    savefig(fig, figdir, 'state_raster_4state', exp_name)
+    plt.close(fig)
+    print(f"  Saved: state_raster_4state")
+
+
+# ── CLI ───────────────────────────────────────────────────────────────────────
+
+def parse_args():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument('--exp_name', required=True)
+    p.add_argument('--saveroot', default=DEFAULT_SAVEROOT)
+    p.add_argument('--figdir',   default=DEFAULT_FIGDIR)
+    return p.parse_args()
+
+
+if __name__ == '__main__':
+    args = parse_args()
+    os.makedirs(args.figdir, exist_ok=True)
+    print(f"\nPlotting: {args.exp_name}")
+    d = load_data(args.exp_name, args.saveroot)
+    plot_overview(d, args.exp_name, args.figdir)
+    plot_transitions(d, args.exp_name, args.figdir)
+    plot_raster(d, args.exp_name, args.figdir)
+    print("Done.")
