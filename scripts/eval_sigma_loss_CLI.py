@@ -2,7 +2,7 @@
 eval_sigma_loss_CLI.py
 
 Evaluate the raw (unweighted) DSM loss as a function of noise scale σ for
-saved DiT-mini row-K checkpoints.
+saved DiT-mini checkpoints.
 
 For each checkpoint and each data split, computes:
     L(σ) = E_x E_ε[ ||D_θ(x + σε, σ) − x||² ]
@@ -13,23 +13,27 @@ Data splits:
   test    — freshly sampled valid samples, non-overlapping with train
   random  — uniform ±1 on the same grid (no rule, boolean hypercube)
 
+Supported rules:
+  row_k          --rule row_k --K 2 --n_size 6
+  row_variable_k --rule row_variable_k --K_list 1 5 --n_size 6
+  global_k       --rule global_k --K_list 1 5 --n_size 6
+  parity         --rule parity --group_size 2 --parity_val 0
+
 Usage:
   python scripts/eval_sigma_loss_CLI.py \
       --exp_name DiT_mini_rowK2_n6_N4096 \
       --rule row_k --K 2 --n_size 6 \
-      --ckpts 0 1000 10000 100000 999999 \
-      --outdir /tmp/sigma_loss
-
-  # Evaluate all 39 saved checkpoints:
-  python scripts/eval_sigma_loss_CLI.py \
-      --exp_name DiT_mini_rowK2_n6_N4096 \
-      --rule row_k --K 2 \
       --ckpts all
 
-  # globalK run:
   python scripts/eval_sigma_loss_CLI.py \
-      --exp_name DiT_mini_globalK15_n6_N4096 \
-      --rule global_k --K_list 1 5 \
+      --exp_name DiT_mini_parity_N4096_D36_G2_even_rep2 \
+      --rule parity --group_size 2 --parity_val 0 \
+      --ckpts all
+
+  # Auto-detect rule params from saved args.json:
+  python scripts/eval_sigma_loss_CLI.py \
+      --exp_name DiT_mini_parity_N4096_D36_G2_even_rep2 \
+      --rule auto \
       --ckpts all
 """
 
@@ -54,14 +58,20 @@ def parse_args():
     # Experiment
     p.add_argument("--exp_name", type=str, required=True,
                    help="Experiment directory name (under SAVEROOT)")
-    # Rule (needed to generate test data)
-    p.add_argument("--rule", type=str, default="row_k",
-                   choices=["row_k", "row_variable_k", "global_k"])
-    p.add_argument("--n_size", type=int, default=6)
-    p.add_argument("--K",     type=int, default=2,
+    # Rule
+    p.add_argument("--rule", type=str, default="auto",
+                   choices=["auto", "row_k", "row_variable_k", "global_k", "parity"],
+                   help="Rule type; 'auto' reads from saved args.json")
+    p.add_argument("--n_size",     type=int, default=6,
+                   help="Grid size for row_k/row_variable_k/global_k rules")
+    p.add_argument("--K",          type=int, default=2,
                    help="Active count per row (row_k only)")
-    p.add_argument("--K_list", type=int, nargs="+", default=[1, 5],
+    p.add_argument("--K_list",     type=int, nargs="+", default=[1, 5],
                    help="Allowed active counts (row_variable_k / global_k)")
+    p.add_argument("--group_size", type=int, default=2,
+                   help="Bits per group for parity rule")
+    p.add_argument("--parity_val", type=int, default=0,
+                   help="Parity target: 0=even, 1=odd")
     # Checkpoints
     p.add_argument("--ckpts", type=str, nargs="+", default=["all"],
                    help="Epoch numbers to evaluate, or 'all' for every saved ckpt")
@@ -87,6 +97,32 @@ def parse_args():
 
 
 # ---------------------------------------------------------------------------
+# Auto-detect rule from saved args.json
+# ---------------------------------------------------------------------------
+
+def detect_rule_from_args(savedir):
+    """Read args.json and return (rule, rule_kwargs) dict."""
+    args_path = os.path.join(savedir, "args.json")
+    with open(args_path) as f:
+        a = json.load(f)
+    if "group_size" in a:
+        return "parity", {"group_size": a["group_size"], "parity_val": a.get("parity", 0)}
+    if "k_ones" in a:
+        raise NotImplementedError("exact_k rule not yet supported in sigma eval")
+    # row_k / row_variable_k / global_k detected by exp_name heuristic
+    name = a.get("exp_name", "")
+    if "globalK" in name:
+        K_list = [int(x) for x in a.get("K_list", [1, 5])]
+        return "global_k", {"K_list": K_list, "n_size": a.get("n_size", 6)}
+    if "rowVarK" in name or "varK" in name.lower():
+        K_list = [int(x) for x in a.get("K_list", [1, 5])]
+        return "row_variable_k", {"K_list": K_list, "n_size": a.get("n_size", 6)}
+    K = a.get("K", 2)
+    n_size = a.get("n_size", 6)
+    return "row_k", {"K": K, "n_size": n_size}
+
+
+# ---------------------------------------------------------------------------
 # Model reconstruction from saved config
 # ---------------------------------------------------------------------------
 
@@ -104,16 +140,15 @@ def load_model(savedir, ckpt_epoch, device):
         train_args = edict(json.load(f))
 
     sigma_data = getattr(train_args, "sigma_data", 1.0)
-    # sigma_data may have been saved as "auto" string in older runs
     if not isinstance(sigma_data, (int, float)):
         sigma_data = 1.0
 
-    DiT_model  = DiT(**config)
+    DiT_model   = DiT(**config)
     model_precd = EDMDiTPrecondWrapper(DiT_model, sigma_data=sigma_data,
                                        sigma_min=0.002, sigma_max=80, rho=7.0)
 
     ckpt_path = os.path.join(savedir, "ckpts", f"model_epoch_{ckpt_epoch:06d}.pth")
-    state = torch.load(ckpt_path, map_location="cpu")
+    state = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     model_precd.load_state_dict(state)
     model_precd.eval().to(device)
     return model_precd, sigma_data
@@ -127,94 +162,92 @@ def load_model(savedir, ckpt_epoch, device):
 def compute_sigma_loss(model, X, sigma, noise_reps, batch_size, device):
     """
     Compute unweighted MSE  E_x E_ε[ ||D_θ(x + σε, σ) − x||² ]
-
-    Parameters
-    ----------
-    model      : EDMDiTPrecondWrapper
-    X          : torch.Tensor (N, C, H, W) — clean data (CPU or GPU)
-    sigma      : float
-    noise_reps : int — noise samples per data point
-    batch_size : int — GPU batch size
-    device     : str
-
-    Returns
-    -------
-    mean_loss  : float
-    std_loss   : float   (std over the N×noise_reps estimates)
+    Returns (mean_loss, std_loss).
     """
-    N = len(X)
-    sigma_t = torch.tensor(sigma, device=device, dtype=torch.float32)
-    all_losses = []
+    sigma_t  = torch.tensor(sigma, device=device, dtype=torch.float32)
+    X_rep    = X.repeat_interleave(noise_reps, dim=0)
+    all_mse  = []
 
-    # Tile X by noise_reps so each clean sample appears noise_reps times
-    X_rep = X.repeat_interleave(noise_reps, dim=0)  # (N*noise_reps, C, H, W)
-    total = len(X_rep)
+    for start in range(0, len(X_rep), batch_size):
+        x0        = X_rep[start:start + batch_size].to(device)
+        x_noisy   = x0 + sigma * torch.randn_like(x0)
+        x_denoise = model(x_noisy, sigma_t.expand(len(x0)))
+        mse       = ((x_denoise - x0) ** 2).flatten(1).mean(dim=1)
+        all_mse.append(mse.cpu())
 
-    for start in range(0, total, batch_size):
-        x0 = X_rep[start:start + batch_size].to(device)
-        eps = torch.randn_like(x0)
-        x_noisy = x0 + sigma * eps
-        # D_θ(x_noisy, σ) — returns denoised x0 estimate
-        x_denoised = model(x_noisy, sigma_t.expand(len(x0)))
-        # Per-sample MSE (flatten spatial dims)
-        mse = ((x_denoised - x0) ** 2).flatten(1).mean(dim=1)  # (bsz,)
-        all_losses.append(mse.cpu())
-
-    all_losses = torch.cat(all_losses)  # (N*noise_reps,)
-    return float(all_losses.mean()), float(all_losses.std())
+    all_mse = torch.cat(all_mse)
+    return float(all_mse.mean()), float(all_mse.std())
 
 
 # ---------------------------------------------------------------------------
-# Test data generation (non-overlapping with train)
+# Test data generation — per rule
 # ---------------------------------------------------------------------------
 
-def sample_test_data(rule, n_size, K, K_list, n_test, train_codes):
+def sample_test_data_parity(group_size, parity_val, sample_len, n_test, train_codes):
     """
-    Sample n_test valid samples not overlapping with training data.
-    train_codes : 1-D torch.Tensor of packed integer codes of training samples.
-    Returns torch.Tensor (n_test, 1, n_size, n_size) float.
+    Generate n_test parity-valid samples not overlapping with training set.
+    Returns (n_test, 1, H, W) float tensor where H*W == sample_len.
     """
-    from core.row_k_lib import (
-        sample_row_k_batch, sample_row_variable_k_batch, sample_global_k_batch,
-        valid_set_size_row_k, valid_set_size_row_variable_k, valid_set_size_global_k,
-        sample_row_k_dataset, sample_row_variable_k_dataset, sample_global_k_dataset,
-    )
+    from core.parity_lib import sample_group_parity_vec
 
-    n2 = n_size * n_size
+    n2          = sample_len
     mem_weights = 1 << torch.arange(n2, dtype=torch.long)
     train_set   = set(train_codes.tolist())
-
-    collected = []
+    collected   = []
     n_collected = 0
-    max_tries = 20
 
-    for _ in range(max_tries):
-        needed = (n_test - n_collected) * 4 + 256  # oversample
-
-        if rule == "row_k":
-            x = sample_row_k_batch(needed, n_size, K)
-        elif rule == "row_variable_k":
-            x = sample_row_variable_k_batch(needed, n_size, K_list)
-        else:  # global_k
-            x, _ = sample_global_k_batch(needed, n_size, K_list)
-
-        # Pack to integer codes for fast membership test
-        # x shape: (needed, n_size, n_size) — already ±1
-        x_flat  = torch.from_numpy(x).long().reshape(len(x), -1)  # (needed, n2)
-        x_pm1   = x_flat                            # already {-1,+1}
-        codes   = (x_flat > 0).long()
-        codes   = (codes * mem_weights).sum(dim=1)  # hash
-
-        # Filter out overlaps
-        mask  = torch.tensor([int(c) not in train_set for c in codes.tolist()])
-        x_new = x_pm1[mask]
+    for _ in range(30):
+        needed  = (n_test - n_collected) * 4 + 256
+        x_np    = sample_group_parity_vec(needed, sample_len, group_size, parity_val)  # (needed, D) int
+        x_flat  = torch.from_numpy(x_np).long()          # {-1,+1}
+        bits    = (x_flat > 0).long()
+        codes   = (bits * mem_weights).sum(dim=1)
+        mask    = torch.tensor([int(c) not in train_set for c in codes.tolist()])
+        x_new   = x_flat[mask].float()
         collected.append(x_new)
         n_collected += len(x_new)
         if n_collected >= n_test:
             break
 
-    x_test = torch.cat(collected, dim=0)[:n_test].float()           # (n_test, n2)
-    return x_test.reshape(n_test, 1, n_size, n_size)                # (n_test,1,H,W)
+    x_test  = torch.cat(collected, dim=0)[:n_test]       # (n_test, D)
+    # Reshape to (n_test, 1, H, W) — recover spatial dims from training data shape
+    side    = int(round(sample_len ** 0.5))
+    H, W    = (side, side) if side * side == sample_len else (1, sample_len)
+    return x_test.reshape(n_test, 1, H, W)
+
+
+def sample_test_data_rowk(rule, n_size, K, K_list, n_test, train_codes):
+    """Generate n_test row-K / global-K valid samples, non-overlapping with train."""
+    from core.row_k_lib import (
+        sample_row_k_batch, sample_row_variable_k_batch, sample_global_k_batch,
+    )
+
+    n2          = n_size * n_size
+    mem_weights = 1 << torch.arange(n2, dtype=torch.long)
+    train_set   = set(train_codes.tolist())
+    collected   = []
+    n_collected = 0
+
+    for _ in range(20):
+        needed = (n_test - n_collected) * 4 + 256
+        if rule == "row_k":
+            x = sample_row_k_batch(needed, n_size, K)
+        elif rule == "row_variable_k":
+            x = sample_row_variable_k_batch(needed, n_size, K_list)
+        else:
+            x, _ = sample_global_k_batch(needed, n_size, K_list)
+
+        x_flat  = torch.from_numpy(x).long().reshape(len(x), -1)
+        codes   = ((x_flat > 0).long() * mem_weights).sum(dim=1)
+        mask    = torch.tensor([int(c) not in train_set for c in codes.tolist()])
+        x_new   = x_flat[mask]
+        collected.append(x_new)
+        n_collected += len(x_new)
+        if n_collected >= n_test:
+            break
+
+    x_test = torch.cat(collected, dim=0)[:n_test].float()
+    return x_test.reshape(n_test, 1, n_size, n_size)
 
 
 # ---------------------------------------------------------------------------
@@ -222,7 +255,7 @@ def sample_test_data(rule, n_size, K, K_list, n_test, train_codes):
 # ---------------------------------------------------------------------------
 
 def main():
-    args = parse_args()
+    args   = parse_args()
     device = torch.device(args.device if torch.cuda.is_available() else "cpu")
     print(f"Device: {device}")
 
@@ -230,17 +263,27 @@ def main():
     outdir  = args.outdir or os.path.join(savedir, "sigma_loss")
     os.makedirs(outdir, exist_ok=True)
 
+    # ── Auto-detect rule ────────────────────────────────────────────────────
+    rule = args.rule
+    rule_kwargs = {}
+    if rule == "auto":
+        rule, rule_kwargs = detect_rule_from_args(savedir)
+        print(f"Auto-detected rule: {rule}  kwargs: {rule_kwargs}")
+    elif rule == "parity":
+        rule_kwargs = {"group_size": args.group_size, "parity_val": args.parity_val}
+    else:
+        rule_kwargs = {"K": args.K, "K_list": args.K_list, "n_size": args.n_size}
+
     # ── Load training data ──────────────────────────────────────────────────
     train_path = os.path.join(savedir, "training_data_tsr.pt")
-    X_train = torch.load(train_path, map_location="cpu")   # (N,1,n,n) float ±1
-    N_train = len(X_train)
-    n_size  = X_train.shape[-1]
-    n_test  = args.n_test or N_train
-    print(f"Training data: {X_train.shape}, n_test={n_test}")
+    X_train    = torch.load(train_path, map_location="cpu", weights_only=False)
+    N_train    = len(X_train)
+    sample_len = X_train[0].numel()         # total bits per sample
+    n_test     = args.n_test or N_train
+    print(f"Training data: {X_train.shape}  sample_len={sample_len}  n_test={n_test}")
 
     # Precompute train codes for overlap detection
-    n2          = n_size * n_size
-    mem_weights = 1 << torch.arange(n2, dtype=torch.long)
+    mem_weights = 1 << torch.arange(sample_len, dtype=torch.long)
     _bits       = (X_train.flatten(1) > 0).long()
     train_codes = (_bits * mem_weights).sum(dim=1)
 
@@ -248,17 +291,24 @@ def main():
     splits = {}
     if "train" in args.splits:
         splits["train"] = X_train
-        print(f"  train  : {len(X_train)} samples")
+        print(f"  train  : {N_train} samples")
 
     if "test" in args.splits:
         print(f"  Sampling {n_test} test samples (non-overlapping)...")
-        X_test = sample_test_data(
-            args.rule, n_size, args.K, args.K_list, n_test, train_codes)
+        if rule == "parity":
+            X_test = sample_test_data_parity(
+                rule_kwargs["group_size"], rule_kwargs["parity_val"],
+                sample_len, n_test, train_codes)
+        else:
+            n_size = rule_kwargs.get("n_size", X_train.shape[-1])
+            X_test = sample_test_data_rowk(
+                rule, n_size, rule_kwargs.get("K", 2),
+                rule_kwargs.get("K_list", [1, 5]), n_test, train_codes)
         splits["test"] = X_test
         print(f"  test   : {len(X_test)} samples")
 
     if "random" in args.splits:
-        X_rand = torch.randint(0, 2, (n_test, 1, n_size, n_size)).float() * 2 - 1
+        X_rand = torch.randint(0, 2, X_train.shape).float() * 2 - 1
         splits["random"] = X_rand
         print(f"  random : {len(X_rand)} samples (uniform ±1)")
 
@@ -269,22 +319,21 @@ def main():
     # ── Checkpoint list ──────────────────────────────────────────────────────
     ckpt_dir = os.path.join(savedir, "ckpts")
     if args.ckpts == ["all"]:
-        ckpt_files = sorted(f for f in os.listdir(ckpt_dir) if f.endswith(".pth"))
+        ckpt_files  = sorted(f for f in os.listdir(ckpt_dir) if f.endswith(".pth"))
         ckpt_epochs = [int(f.split("_")[-1].replace(".pth", "")) for f in ckpt_files]
     else:
         ckpt_epochs = [int(c) for c in args.ckpts]
-    print(f"Checkpoints to evaluate: {len(ckpt_epochs)} — {ckpt_epochs[:5]}...{ckpt_epochs[-3:]}")
+    print(f"Checkpoints: {len(ckpt_epochs)} — {ckpt_epochs[:3]}...{ckpt_epochs[-2:]}")
 
     # ── Evaluate ─────────────────────────────────────────────────────────────
     for ckpt_epoch in ckpt_epochs:
         out_path = os.path.join(outdir, f"sigma_loss_epoch_{ckpt_epoch:06d}.npz")
         if os.path.exists(out_path):
-            print(f"  [skip] epoch {ckpt_epoch} already done → {out_path}")
+            print(f"  [skip] epoch {ckpt_epoch}")
             continue
 
         print(f"\n── Epoch {ckpt_epoch} ──")
         model, sigma_data = load_model(savedir, ckpt_epoch, device)
-
         results = {"sigma_grid": sigma_grid}
 
         for split_name, X in splits.items():
@@ -297,18 +346,22 @@ def main():
                 stds[si]  = s
             results[f"loss_{split_name}"] = means
             results[f"std_{split_name}"]  = stds
-            print(f"    {split_name}: loss@σ=0.002={means[0]:.4f}  loss@σ=1.0={means[args.n_sigma//2]:.4f}  loss@σ=80={means[-1]:.4f}")
+            print(f"    {split_name}: σ=0.002→{means[0]:.4f}  σ≈1→{means[args.n_sigma//2]:.4f}  σ=80→{means[-1]:.4f}")
 
         # Save metadata
-        results["meta_exp_name"]   = args.exp_name
-        results["meta_ckpt_epoch"] = ckpt_epoch
-        results["meta_N_train"]    = N_train
-        results["meta_N_test"]     = n_test
-        results["meta_noise_reps"] = args.noise_reps
-        results["meta_sigma_data"] = sigma_data
-        results["meta_rule"]       = args.rule
-        results["meta_K"]          = args.K
-        results["meta_K_list"]     = np.array(args.K_list)
+        results.update({
+            "meta_exp_name":   args.exp_name,
+            "meta_ckpt_epoch": ckpt_epoch,
+            "meta_N_train":    N_train,
+            "meta_N_test":     n_test,
+            "meta_noise_reps": args.noise_reps,
+            "meta_sigma_data": sigma_data,
+            "meta_rule":       rule,
+            "meta_K":          rule_kwargs.get("K", -1),
+            "meta_K_list":     np.array(rule_kwargs.get("K_list", [])),
+            "meta_group_size": rule_kwargs.get("group_size", -1),
+            "meta_parity_val": rule_kwargs.get("parity_val", -1),
+        })
 
         np.savez_compressed(out_path, **results)
         print(f"  Saved → {out_path}")
