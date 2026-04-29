@@ -477,18 +477,31 @@ def plot_ham_before_after(ham_before, ham_after, n_bits,
                 ms=8, capsize=5, lw=2.5, zorder=4,
                 label=f'mean after={mu_a:.2f} ± {sem_a:.2f}')
 
-    # stats test (use full arrays, not subsampled)
-    n_valid = len(np.asarray(ham_before))
+    # stats annotation — Wilcoxon test + bit-flip stats (use full K, not subsampled)
     diff = ham_before - ham_after
+    n_bits_full = np.asarray(n_bits) if 'n_bits' not in dir() else n_bits   # already full K
     if (diff != 0).any():
         stat, pval = wilcoxon(ham_before, ham_after, alternative='two-sided')
         pstr = f'p={pval:.2e}' if pval >= 1e-300 else 'p<1e-300'
-        ax.text(0.97, 0.97, f'Wilcoxon W={stat:.0f}\n{pstr}\n(n={K})',
-                transform=ax.transAxes, ha='right', va='top',
-                fontsize=8, bbox=dict(fc='white', ec='gray', alpha=0.8))
+        wilcoxon_str = f'Wilcoxon W={stat:.0f}\n{pstr}'
     else:
-        ax.text(0.97, 0.97, f'all diffs=0\n(n={K})',
-                transform=ax.transAxes, ha='right', va='top', fontsize=8)
+        wilcoxon_str = 'all diffs=0'
+
+    annot = (
+        f'── Hamming Δ (before−after) ──\n'
+        f'  n={K}\n'
+        f'  mean={diff.mean():+.2f}  med={np.median(diff):+.2f}  std={diff.std():.2f}\n'
+        f'{wilcoxon_str}\n'
+        f'── Bits flipped ──\n'
+        f'  mean={n_bits.mean():.2f}  med={np.median(n_bits):.1f}  std={n_bits.std():.2f}\n'
+        f'  1-bit={100*(n_bits==1).mean():.1f}%  '
+        f'2-bit={100*(n_bits==2).mean():.1f}%  '
+        f'>4={100*(n_bits>4).mean():.1f}%'
+    )
+    ax.text(0.97, 0.97, annot,
+            transform=ax.transAxes, ha='right', va='top',
+            fontsize=7.5, family='monospace',
+            bbox=dict(fc='white', ec='gray', alpha=0.85, boxstyle='round,pad=0.4'))
 
     # colorbar for n_bits
     sm = plt.cm.ScalarMappable(cmap=cmap_, norm=norm)
