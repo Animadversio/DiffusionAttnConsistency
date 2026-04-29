@@ -266,6 +266,7 @@ def ham_at_transition_single_window(ham, epochs_sub, is_valid, is_mem,
 
     trans      = make_transition_mask(is_valid, is_mem, src, dst, has_ambiguous)  # (T-1, N)
     ham_before = ham[:-1]                                                          # (T-1, N)
+    ham_after  = ham[1:]                                                           # (T-1, N)
 
     time_sel = np.ones(T - 1, dtype=bool)
     if ep_lo is not None:
@@ -275,6 +276,7 @@ def ham_at_transition_single_window(ham, epochs_sub, is_valid, is_mem,
 
     trans_win = trans & time_sel[:, None]
     ham_win   = ham_before[trans_win]
+    ham_win_after = ham_after[trans_win]
     ep_win    = epochs_sub[np.where(trans_win)[0]]
 
     lo_str = f"{ep_lo:.0f}" if ep_lo is not None else "start"
@@ -282,11 +284,13 @@ def ham_at_transition_single_window(ham, epochs_sub, is_valid, is_mem,
     label  = f"ep [{lo_str}, {hi_str})"
 
     result = dict(
-        ham=ham_win, epochs=ep_win,
+        ham=ham_win,              # Hamming just BEFORE the transition (at t)
+        ham_after=ham_win_after,  # Hamming just AFTER  the transition (at t+1)
+        epochs=ep_win,
         ep_lo=ep_lo, ep_hi=ep_hi, label=label,
         n_transitions=len(ham_win),
-        median=float(np.median(ham_win)) if len(ham_win) else float('nan'),
-        mean=float(ham_win.mean())       if len(ham_win) else float('nan'),
+        median=float(np.median(ham_win))      if len(ham_win) else float('nan'),
+        mean=float(ham_win.mean())            if len(ham_win) else float('nan'),
         pct_zero=float((ham_win == 0).mean()) if len(ham_win) else float('nan'),
     )
     return result, trans
