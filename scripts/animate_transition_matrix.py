@@ -121,7 +121,7 @@ def run(exp_name, saveroot, window=5, frame_stride=5, fps=10, dpi=120, fmt='gif'
         fig.canvas.draw()
         buf = np.frombuffer(fig.canvas.buffer_rgba(), dtype=np.uint8)
         w, h = fig.canvas.get_width_height()
-        frames.append(buf.reshape(h, w, 4)[..., :3])
+        frames.append(buf.reshape(h, w, 4)[..., :3].copy())
         if (fi + 1) % 50 == 0:
             print(f"    {fi+1}/{n_frames} frames done")
 
