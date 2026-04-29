@@ -4,7 +4,7 @@
 #SBATCH -c 16               # Number of cores (-c)
 #SBATCH --mem=75G           # Memory pool for all cores (see also --mem-per-cpu)
 #SBATCH --gres=gpu:1
-#SBATCH --array=87-94%8
+#SBATCH --array=73-80%8
 #SBATCH --account=kempner_binxuwang_lab
 #SBATCH -o DiT_edm_learn_parity_%A_%a.out  # File to which STDOUT will be written, %j inserts jobid
 #SBATCH -e DiT_edm_learn_parity_%A_%a.err  # File to which STDERR will be written, %j inserts jobid

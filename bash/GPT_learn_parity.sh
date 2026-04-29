@@ -123,7 +123,7 @@ which python
 
 # run code
 cd /n/home12/binxuwang/Github/DiffusionAttnConsistency
-python scripts/GPT_learn_parity_CLI.py --record_frequency 0 \
+/n/home12/binxuwang/.conda/envs/torch2/bin/python scripts/GPT_learn_parity_CLI.py --record_frequency 0 \
     --lr 1e-4 --batch_size 256 --weight_decay 0.01 \
     --eval_sample_size 2048 --eval_batch_size 1024 --temperature 1.0 --use_tensorboard --tb_log_every 100 \
     $param_name
