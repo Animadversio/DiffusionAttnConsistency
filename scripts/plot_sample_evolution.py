@@ -161,81 +161,50 @@ STATE_LABELS = [
 STATE_COLORS_4 = ['#ff7f0e', '#d62728', '#2ca02c', '#9467bd']
 
 
-def plot_transition_heatmap(mat44, ax=None, normalize=True, title='', fmt_count=True):
+def plot_transition_heatmap(mat44, ax=None, normalize=True, title=''):
     """
     Plot a single (4, 4) transition matrix as an annotated heatmap.
 
+    Convention:  mat44[i, j] = FROM state i  →  TO state j
+                 (row = source, col = destination)
+
     Parameters
     ----------
-    mat44 : array-like, shape (4, 4)
-        Transition counts or probabilities. Typically obtained by averaging
-        T_count or T_prob over a time slice:
-            T_count, T_prob, epochs, ep_mid = compute_transition_matrix(d)
-            mat44 = T_count[t0:t1].sum(axis=0)   # aggregate counts
-            mat44 = T_prob[t0:t1].mean(axis=0)   # average probabilities
+    mat44     : array-like (4, 4) — counts or probabilities
+    normalize : row-normalize to get transition probabilities (default True)
+    ax        : existing Axes to draw into; creates new figure if None
+    title     : axes title string
 
-        Convention:  mat44[i, j] = i → j  (row = FROM, col = TO)
-
-    normalize : bool
-        If True, row-normalize so each row sums to 1 (transition probabilities).
-        If False, show raw values as-is.
-
-    ax : matplotlib Axes or None
-        If None, creates a new figure.
-
-    title : str
-        Axes title.
-
-    fmt_count : bool
-        If True and normalize=False, format cell annotations as integers.
-        If normalize=True, always formats as probabilities (2 decimal places).
-
-    Returns
-    -------
-    ax : the matplotlib Axes with the heatmap
+    Typical usage
+    -------------
+    T_count, T_prob, epochs, ep_mid = compute_transition_matrix(d)
+    plot_transition_heatmap(T_count[t0:t1].sum(axis=0), normalize=True)
+    plot_transition_heatmap(T_count[t0:t1].sum(axis=0), normalize=False)
     """
-    import matplotlib.pyplot as plt
-    import matplotlib.colors as mcolors
+    import seaborn as sns
 
+    short = ['Inv-ambig (0)', 'Inv-rule (1)', 'Valid-novel (2)', 'Memorized (3)']
     mat44 = np.array(mat44, dtype=np.float64)
+
     if normalize:
         row_sums = mat44.sum(axis=1, keepdims=True)
         mat_show = np.where(row_sums > 0, mat44 / row_sums, 0.0)
-        vmin, vmax = 0.0, 1.0
-        cbar_label = 'Transition probability (row-normalized)'
+        fmt, vmin, vmax = '.2f', 0.0, 1.0
     else:
         mat_show = mat44
-        vmin, vmax = 0, mat44.max() or 1
-        cbar_label = 'Count'
+        fmt, vmin, vmax = '.0f', 0, mat44.max() or 1
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=(6, 5))
-    else:
-        fig = ax.figure
+        _, ax = plt.subplots(figsize=(6, 5))
 
-    im = ax.imshow(mat_show, vmin=vmin, vmax=vmax, cmap='Blues', aspect='equal')
-    fig.colorbar(im, ax=ax, label=cbar_label, shrink=0.8)
+    sns.heatmap(mat_show, annot=True, fmt=fmt, cmap='Blues',
+                vmin=vmin, vmax=vmax,
+                xticklabels=short, yticklabels=short,
+                linewidths=0.5, ax=ax)
 
-    # Annotate cells
-    thresh = (vmin + vmax) / 2
-    for i in range(4):
-        for j in range(4):
-            val = mat_show[i, j]
-            txt = f'{val:.2f}' if (normalize or not fmt_count) else f'{int(mat44[i,j])}'
-            color = 'white' if val > thresh else 'black'
-            ax.text(j, i, txt, ha='center', va='center', fontsize=10,
-                    color=color, fontweight='bold' if i == j else 'normal')
-
-    # Axis labels — state names
-    short = ['Inv-ambig\n(0)', 'Inv-rule\n(1)', 'Valid-novel\n(2)', 'Memorized\n(3)']
-    ax.set_xticks(range(4))
-    ax.set_yticks(range(4))
-    ax.set_xticklabels(short, fontsize=9)
-    ax.set_yticklabels(short, fontsize=9)
     ax.set_xlabel('Destination state  (TO →)', fontsize=10)
     ax.set_ylabel('Source state  (FROM ↓)', fontsize=10)
 
-    # Color tick labels by state color
     for tick, col in zip(ax.get_xticklabels(), STATE_COLORS_4):
         tick.set_color(col)
     for tick, col in zip(ax.get_yticklabels(), STATE_COLORS_4):
