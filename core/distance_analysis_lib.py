@@ -296,6 +296,84 @@ def ham_at_transition_single_window(ham, epochs_sub, is_valid, is_mem,
     return result, trans
 
 
+def bits_changed_at_transition(n_bits_changed, epochs_sub,
+                               is_valid, is_mem,
+                               ep_lo=None, ep_hi=None,
+                               src='v', dst='m', has_ambiguous=None,
+                               bit_change_rate=None):
+    """
+    For each transition event of type src→dst within [ep_lo, ep_hi), collect:
+      - number of bits flipped between t and t+1          (from evo n_bits_changed)
+      - optionally per-position flip rates at those steps  (from evo bit_change_rate)
+
+    All arrays must come from evolution_metrics.npz and share the same T.
+
+    Parameters
+    ----------
+    n_bits_changed : (T-1, N) int16   bits flipped per sample between t and t+1
+    epochs_sub     : (T,)    int64    checkpoint epochs (length T; transitions span T-1)
+    is_valid       : (T, N)  bool
+    is_mem         : (T, N)  bool
+    ep_lo, ep_hi   : float or None    epoch window (None = open-ended)
+    src, dst       : str or int       transition states (see make_transition_mask)
+    has_ambiguous  : (T, N) bool or None
+    bit_change_rate: (T-1, D) float32 or None
+                     per-position flip frequency; if provided, returns mean
+                     per-position rate over selected transitions
+
+    Returns
+    -------
+    result : dict with keys:
+        'n_bits'         : (K,) int16   bits flipped for each transition event
+        'epochs'         : (K,) int64   epoch (t) of each event
+        'n_transitions'  : int
+        'median'         : float
+        'mean'           : float
+        'pct_one_bit'    : float        fraction of single-bit-flip transitions
+        'bit_pos_rate'   : (D,) float32 or None
+                           mean per-position flip rate over selected transitions
+                           (only if bit_change_rate is provided)
+    trans_mask : (T-1, N) bool   full transition mask (before time windowing)
+    """
+    T, N = is_valid.shape
+    assert n_bits_changed.shape == (T - 1, N), \
+        f"n_bits_changed shape {n_bits_changed.shape} must be (T-1, N) = {(T-1, N)}"
+
+    trans    = make_transition_mask(is_valid, is_mem, src, dst, has_ambiguous)  # (T-1, N)
+    time_sel = np.ones(T - 1, dtype=bool)
+    if ep_lo is not None:
+        time_sel &= epochs_sub[:-1] >= ep_lo
+    if ep_hi is not None:
+        time_sel &= epochs_sub[:-1] <  ep_hi
+
+    trans_win  = trans & time_sel[:, None]                   # (T-1, N)
+    n_bits_win = n_bits_changed[trans_win]                   # (K,) int16
+    ep_win     = epochs_sub[np.where(trans_win)[0]]          # (K,) int64
+
+    # per-position flip rate averaged over selected (t, i) events
+    bit_pos = None
+    if bit_change_rate is not None:
+        # For each selected time step t, weight by number of transitioning samples
+        t_idx = np.where(trans_win.any(axis=1))[0]          # unique t's with events
+        if len(t_idx):
+            rates = bit_change_rate[t_idx]                   # (t_uniq, D)
+            # weight by event count at each t
+            counts = trans_win[t_idx].sum(axis=1)            # (t_uniq,)
+            bit_pos = (rates * counts[:, None]).sum(axis=0) / counts.sum()
+            bit_pos = bit_pos.astype(np.float32)
+
+    result = dict(
+        n_bits=n_bits_win,
+        epochs=ep_win,
+        n_transitions=len(n_bits_win),
+        median=float(np.median(n_bits_win))          if len(n_bits_win) else float('nan'),
+        mean=float(n_bits_win.mean())                if len(n_bits_win) else float('nan'),
+        pct_one_bit=float((n_bits_win == 1).mean())  if len(n_bits_win) else float('nan'),
+        bit_pos_rate=bit_pos,
+    )
+    return result, trans
+
+
 def ham_at_transition_summary(windows):
     """Print a quick text summary of Hamming values per window."""
     print(f"{'Window':<35} {'N':>6}  {'median':>7}  {'mean':>7}  {'%at0':>6}")
