@@ -131,16 +131,25 @@ def run(exp_name, saveroot, window=5, frame_stride=5, fps=10, dpi=120, fmt='gif'
         import imageio
         imageio.mimwrite(out_path, frames, fps=fps, loop=0)
     else:
-        # Write frames to a temp GIF then convert to MP4 via ffmpeg (mpeg4 codec)
-        import imageio, subprocess, tempfile
-        tmp_gif = out_path.replace('.mp4', '_tmp.gif')
-        imageio.mimwrite(tmp_gif, frames, fps=fps, loop=0)
+        # Pipe raw RGB frames directly to ffmpeg — no intermediate file
+        import subprocess
+        h, w = frames[0].shape[:2]
         ffmpeg = '/n/home12/binxuwang/.conda/envs/caffe/bin/ffmpeg'
-        subprocess.run([
-            ffmpeg, '-y', '-r', str(fps), '-i', tmp_gif,
-            '-vcodec', 'mpeg4', '-q:v', '3', '-r', str(fps), out_path
-        ], check=True, capture_output=True)
-        os.remove(tmp_gif)
+        cmd = [
+            ffmpeg, '-y',
+            '-f', 'rawvideo', '-vcodec', 'rawvideo',
+            '-s', f'{w}x{h}', '-pix_fmt', 'rgb24',
+            '-r', str(fps), '-i', 'pipe:',
+            '-vcodec', 'mpeg4', '-q:v', '3', '-pix_fmt', 'yuv420p',
+            out_path
+        ]
+        proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stderr=subprocess.PIPE)
+        for frame in frames:
+            proc.stdin.write(frame.tobytes())
+        proc.stdin.close()
+        proc.wait()
+        if proc.returncode != 0:
+            raise RuntimeError(proc.stderr.read().decode())
     print(f"  Saved → {out_path}  ({os.path.getsize(out_path)/1e6:.1f} MB)")
 
 
