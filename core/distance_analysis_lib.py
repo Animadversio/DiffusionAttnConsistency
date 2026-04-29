@@ -769,3 +769,63 @@ def aggregate_transition_matrix(T_count, epochs, ep_lo=None, ep_hi=None):
     if ep_hi is not None:
         mask &= trans_epochs <  ep_hi
     return T_count[mask].sum(axis=0)
+
+
+def ham_by_state_window(ham, epochs_sub, is_valid, is_mem,
+                        sample_type='all', ep_lo=None, ep_hi=None,
+                        has_ambiguous=None):
+    """
+    Extract Hamming distances for samples of a given state type within
+    an epoch window, flattened across all (t, i) entries in that window.
+
+    Parameters
+    ----------
+    ham          : (T, N) int16   nearest Hamming to training set
+    epochs_sub   : (T,)   int64   checkpoint epochs
+    is_valid     : (T, N) bool
+    is_mem       : (T, N) bool
+    sample_type  : str
+        'all'  — every sample at every checkpoint in the window
+        'v'    — valid novel   (is_valid & ~is_mem)
+        'm'    — memorized     (is_mem)
+        'i'    — any invalid   (~is_valid)
+        'ir'   — rule-invalid  (~is_valid & ~has_ambiguous)  requires has_ambiguous
+        'ia'   — ambig-invalid (~is_valid &  has_ambiguous)  requires has_ambiguous
+    ep_lo, ep_hi : float or None  epoch window (None = open-ended)
+    has_ambiguous: (T, N) bool or None
+
+    Returns
+    -------
+    ham_vals : (K,) int16   Hamming values for all matching (t, i) entries
+    """
+    T, N = is_valid.shape
+
+    # time mask
+    time_sel = np.ones(T, dtype=bool)
+    if ep_lo is not None:
+        time_sel &= epochs_sub >= ep_lo
+    if ep_hi is not None:
+        time_sel &= epochs_sub <  ep_hi
+
+    # state mask (T, N)
+    if   sample_type == 'all':
+        state_mask = np.ones((T, N), dtype=bool)
+    elif sample_type == 'v':
+        state_mask =  is_valid & ~is_mem
+    elif sample_type == 'm':
+        state_mask =  is_mem
+    elif sample_type == 'i':
+        state_mask = ~is_valid
+    elif sample_type in ('ir', 'ia'):
+        if has_ambiguous is None:
+            raise ValueError(f"has_ambiguous required for sample_type={sample_type!r}")
+        if sample_type == 'ir':
+            state_mask = ~is_valid & ~has_ambiguous
+        else:
+            state_mask = ~is_valid &  has_ambiguous
+    else:
+        raise ValueError(f"Unknown sample_type {sample_type!r}. "
+                         f"Choose from: 'all','v','m','i','ir','ia'")
+
+    combined = state_mask & time_sel[:, None]   # (T, N)
+    return ham[combined]
