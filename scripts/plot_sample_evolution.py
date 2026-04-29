@@ -150,6 +150,95 @@ def compute_transition_matrix(d):
     return T_count, T_prob, epochs, ep_mid
 
 
+# ── Transition matrix plot ────────────────────────────────────────────────────
+
+STATE_LABELS = [
+    'Invalid\n(quant-ambig)',
+    'Invalid\n(rule-error)',
+    'Valid\n(novel)',
+    'Valid\n(memorized)',
+]
+STATE_COLORS_4 = ['#ff7f0e', '#d62728', '#2ca02c', '#9467bd']
+
+
+def plot_transition_matrix(d, exp_name, figdir=None, save=True,
+                           smooth_alpha=0.85, which='prob'):
+    """
+    4×4 grid of transition curves — one panel per (source, destination) state pair.
+
+    Layout:
+        Row i = source state i   (FROM)
+        Col j = destination state j  (TO)
+        Diagonal (i==j) = self-retention probability (staying in same state)
+        Off-diagonal    = actual transition probability/count
+
+    State indices:
+        0 = Invalid, quant-ambiguous  (orange)
+        1 = Invalid, rule-error       (red)
+        2 = Valid, novel              (green)
+        3 = Valid, memorized          (purple)
+
+    Parameters
+    ----------
+    which : 'prob' (default) or 'count'
+        Whether to plot conditional transition probabilities or raw counts.
+    smooth_alpha : float
+        EMA smoothing factor (0 = no smoothing, higher = more smoothing).
+    save : bool
+        If False, skip savefig/plt.close so the figure renders inline in notebooks.
+    """
+    T_count, T_prob, epochs, ep_mid = compute_transition_matrix(d)
+    mat = T_prob if which == 'prob' else T_count.astype(np.float32)
+    ylabel = 'Transition probability' if which == 'prob' else 'Transition count'
+
+    fig, axes = plt.subplots(4, 4, figsize=(14, 12), sharex=True)
+    fig.suptitle(
+        f"State transition {'probabilities' if which == 'prob' else 'counts'} — {exp_name}\n"
+        f"Row = source state (FROM),  Col = destination state (TO)",
+        fontsize=11, fontweight='bold'
+    )
+
+    for i in range(4):   # source (FROM)
+        for j in range(4):   # destination (TO)
+            ax = axes[i, j]
+            y_raw = mat[:, i, j]
+            y_ema = ema(y_raw, alpha=smooth_alpha) if smooth_alpha > 0 else y_raw
+
+            col = STATE_COLORS_4[j]
+            lw  = 2.0 if i == j else 1.6
+            ls  = '-' if i != j else '--'
+
+            ax.plot(ep_mid + 1, y_raw, color=col, lw=0.4, alpha=0.2)
+            ax.plot(ep_mid + 1, y_ema, color=col, lw=lw, ls=ls)
+            ax.set_xscale('log')
+            ax.grid(alpha=0.2)
+
+            # Shade diagonal differently (self-retention)
+            if i == j:
+                ax.set_facecolor('#f5f5f5')
+
+            # Row label on left column only
+            if j == 0:
+                ax.set_ylabel(f'FROM\n{STATE_LABELS[i]}', fontsize=7,
+                               color=STATE_COLORS_4[i], labelpad=4)
+            # Column label on top row only
+            if i == 0:
+                ax.set_title(f'TO\n{STATE_LABELS[j]}', fontsize=7,
+                              color=STATE_COLORS_4[j])
+            # x-label on bottom row only
+            if i == 3:
+                ax.set_xlabel('Step', fontsize=7)
+
+            if which == 'prob':
+                ax.set_ylim(0, 1)
+
+    plt.tight_layout(rect=[0, 0, 1, 0.95])
+    if save:
+        savefig(fig, figdir, 'transition_matrix', exp_name)
+        plt.close(fig)
+        print(f"  Saved: transition_matrix")
+
+
 # ── Figure 1: Overview ────────────────────────────────────────────────────────
 
 def plot_overview(d, exp_name, figdir=None, save=True):
