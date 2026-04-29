@@ -131,13 +131,16 @@ def run(exp_name, saveroot, window=5, frame_stride=5, fps=10, dpi=120, fmt='gif'
         import imageio
         imageio.mimwrite(out_path, frames, fps=fps, loop=0)
     else:
-        import cv2
-        h, w = frames[0].shape[:2]
-        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
-        writer = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
-        for frame in frames:
-            writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
-        writer.release()
+        # Write frames to a temp GIF then convert to MP4 via ffmpeg (mpeg4 codec)
+        import imageio, subprocess, tempfile
+        tmp_gif = out_path.replace('.mp4', '_tmp.gif')
+        imageio.mimwrite(tmp_gif, frames, fps=fps, loop=0)
+        ffmpeg = '/n/home12/binxuwang/.conda/envs/caffe/bin/ffmpeg'
+        subprocess.run([
+            ffmpeg, '-y', '-r', str(fps), '-i', tmp_gif,
+            '-vcodec', 'mpeg4', '-q:v', '3', '-r', str(fps), out_path
+        ], check=True, capture_output=True)
+        os.remove(tmp_gif)
     print(f"  Saved → {out_path}  ({os.path.getsize(out_path)/1e6:.1f} MB)")
 
 
