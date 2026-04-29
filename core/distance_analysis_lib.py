@@ -389,6 +389,157 @@ def ham_at_transition_summary(windows):
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
 
+def plot_ham_before_after(ham_before, ham_after, n_bits,
+                          ax=None, title='',
+                          max_points=400, jitter=0.18,
+                          cmap='RdPu', rng=None):
+    """
+    Paired jitter plot showing Hamming distance BEFORE and AFTER a transition,
+    with lines connecting each pair colored by the number of bits that flipped.
+
+    Parameters
+    ----------
+    ham_before : (K,) int16   Hamming to training set just before transition
+    ham_after  : (K,) int16   Hamming to training set just after  transition
+    n_bits     : (K,) int16   bits flipped during the transition
+    ax         : matplotlib Axes or None
+    title      : str
+    max_points : int           subsample to this many pairs (avoids crowding)
+    jitter     : float         horizontal jitter width
+    cmap       : str           colormap for n_bits (default: RdPu — low=pale, high=saturated)
+    rng        : np.random.Generator or None  for reproducible subsampling
+
+    Returns
+    -------
+    fig, ax
+
+    Stats annotation
+    ----------------
+    Wilcoxon signed-rank test (paired, two-sided) on ham_before vs ham_after.
+    Annotated on the figure as W=..., p=...
+    """
+    from scipy.stats import wilcoxon
+    import matplotlib.colors as mcolors
+
+    ham_before = np.asarray(ham_before, dtype=np.float32)
+    ham_after  = np.asarray(ham_after,  dtype=np.float32)
+    n_bits     = np.asarray(n_bits,     dtype=np.float32)
+    K = len(ham_before)
+    assert len(ham_after) == K and len(n_bits) == K
+
+    # subsample
+    if K > max_points:
+        rng = rng or np.random.default_rng(0)
+        idx = rng.choice(K, size=max_points, replace=False)
+        ham_before = ham_before[idx]
+        ham_after  = ham_after[idx]
+        n_bits     = n_bits[idx]
+        n_shown    = max_points
+    else:
+        n_shown = K
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(5, 5))
+    else:
+        fig = ax.figure
+
+    # color by n_bits
+    vmin, vmax = 1, max(int(n_bits.max()), 2)
+    norm   = mcolors.Normalize(vmin=vmin, vmax=vmax)
+    cmap_  = plt.get_cmap(cmap)
+    colors = cmap_(norm(n_bits))   # (n_shown, 4)
+
+    rng2 = np.random.default_rng(42)
+    jb = rng2.uniform(-jitter, jitter, n_shown)
+    ja = rng2.uniform(-jitter, jitter, n_shown)
+
+    x_before = np.zeros(n_shown) + jb
+    x_after  = np.ones(n_shown)  + ja
+
+    # draw connecting lines first (behind points)
+    for xb, xa, yb, ya, c in zip(x_before, x_after, ham_before, ham_after, colors):
+        ax.plot([xb, xa], [yb, ya], color=c, alpha=0.25, lw=0.7, zorder=1)
+
+    # scatter points
+    ax.scatter(x_before, ham_before, c=colors, s=12, zorder=2,
+               edgecolors='none', alpha=0.6)
+    ax.scatter(x_after,  ham_after,  c=colors, s=12, zorder=2,
+               edgecolors='none', alpha=0.6, marker='D')
+
+    # mean markers
+    ax.hlines(ham_before.mean(), -jitter*2, jitter*2,
+              colors='steelblue', lw=2.5, zorder=3, label=f'mean before={ham_before.mean():.2f}')
+    ax.hlines(ham_after.mean(),  1-jitter*2, 1+jitter*2,
+              colors='tomato', lw=2.5, zorder=3, label=f'mean after={ham_after.mean():.2f}')
+
+    # stats test (use full arrays, not subsampled)
+    n_valid = len(np.asarray(ham_before))
+    diff = ham_before - ham_after
+    if (diff != 0).any():
+        stat, pval = wilcoxon(ham_before, ham_after, alternative='two-sided')
+        pstr = f'p={pval:.2e}' if pval >= 1e-300 else 'p<1e-300'
+        ax.text(0.97, 0.97, f'Wilcoxon W={stat:.0f}\n{pstr}\n(n={K})',
+                transform=ax.transAxes, ha='right', va='top',
+                fontsize=8, bbox=dict(fc='white', ec='gray', alpha=0.8))
+    else:
+        ax.text(0.97, 0.97, f'all diffs=0\n(n={K})',
+                transform=ax.transAxes, ha='right', va='top', fontsize=8)
+
+    # colorbar for n_bits
+    sm = plt.cm.ScalarMappable(cmap=cmap_, norm=norm)
+    sm.set_array([])
+    cb = fig.colorbar(sm, ax=ax, shrink=0.6, pad=0.02)
+    cb.set_label('bits flipped', fontsize=8)
+
+    ax.set_xticks([0, 1])
+    ax.set_xticklabels(['Before\ntransition', 'After\ntransition'], fontsize=10)
+    ax.set_ylabel('Nearest Hamming distance to training set', fontsize=10)
+    ax.set_title(title or f'Hamming before/after transition  (showing {n_shown}/{K})')
+    ax.legend(fontsize=8, loc='upper left', framealpha=0.8)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    return fig, ax
+
+
+def plot_ham_before_after_from_window(ham, epochs_sub, is_valid, is_mem,
+                                      n_bits_changed,
+                                      ep_lo=None, ep_hi=None,
+                                      src='v', dst='m', has_ambiguous=None,
+                                      ax=None, title='', max_points=400, **kwargs):
+    """
+    High-level wrapper: selects transition events via ham_at_transition_single_window
+    and bits_changed_at_transition, then calls plot_ham_before_after.
+
+    Parameters
+    ----------
+    ham, epochs_sub, is_valid, is_mem : from dist_to_train.npz / evolution_metrics.npz
+    n_bits_changed : (T-1, N) int16   from evo['n_bits_changed']
+    ep_lo, ep_hi   : epoch window
+    src, dst       : transition states
+    has_ambiguous  : (T, N) bool or None
+    **kwargs       : passed to plot_ham_before_after (jitter, cmap, rng, ...)
+    """
+    ham_res, _ = ham_at_transition_single_window(
+        ham, epochs_sub, is_valid, is_mem,
+        ep_lo=ep_lo, ep_hi=ep_hi, src=src, dst=dst,
+        has_ambiguous=has_ambiguous,
+    )
+    bits_res, _ = bits_changed_at_transition(
+        n_bits_changed, epochs_sub, is_valid, is_mem,
+        ep_lo=ep_lo, ep_hi=ep_hi, src=src, dst=dst,
+        has_ambiguous=has_ambiguous,
+    )
+    if title == '':
+        lo_str = f"{ep_lo:.0f}" if ep_lo is not None else "start"
+        hi_str = f"{ep_hi:.0f}" if ep_hi is not None else "end"
+        title  = f"{src}→{dst}  ep [{lo_str}, {hi_str})"
+
+    return plot_ham_before_after(
+        ham_res['ham'], ham_res['ham_after'], bits_res['n_bits'],
+        ax=ax, title=title, max_points=max_points, **kwargs,
+    )
+
+
 def plot_ham_v2m_windows(windows, bins=np.arange(0, 19),
                          ax=None, title='', palette='plasma'):
     """
