@@ -217,6 +217,8 @@ def parse_args():
     parser.add_argument("--loss_type", type=str, default="DSM", help="Loss type (DSM, ESM)")
     # training hyper-parameters
     parser.add_argument("--lr", type=float, default=0.0001, help="Learning rate")
+    parser.add_argument("--weight_decay", type=float, default=0.0,
+                        help="Weight decay (L2 regularization). 0 = Adam; >0 = AdamW with decoupled WD.")
     parser.add_argument("--batch_size", type=int, default=256, help="Batch size")
     parser.add_argument("--nsteps", type=int, default=5000, help="Number of steps")
     # model hyper-parameters
@@ -287,6 +289,7 @@ exp_name = args.exp_name
 batch_size = args.batch_size
 nsteps = args.nsteps
 lr = args.lr
+weight_decay = args.weight_decay
 eval_sample_size = args.eval_sample_size
 eval_batch_size = args.eval_batch_size
 eval_sampling_steps = args.eval_sampling_steps
@@ -441,8 +444,9 @@ elif args.loss_type == "ESM":
     edm_loss_fn = EDMDeltaGMMScoreLoss(train_Xmat=Xtsr.to(device), P_mean=-1.2, P_std=1.2, sigma_data=sigma_data)
 else:
     raise ValueError(f"Invalid loss type: {args.loss_type}")
-model_precd, loss_traj = train_score_model_custom_loss(Xtsr, model_precd, edm_loss_fn, 
-                                    lr=lr, nepochs=nsteps, batch_size=batch_size, device=device, 
+model_precd, loss_traj = train_score_model_custom_loss(Xtsr, model_precd, edm_loss_fn,
+                                    lr=lr, weight_decay=weight_decay,
+                                    nepochs=nsteps, batch_size=batch_size, device=device,
                                     callback=sampling_eval_callback_fn, callback_freq=record_frequency, callback_step_list=record_times,
                                     save_ckpts=save_ckpts, ckpt_dir=ckpt_dir, save_ckpt_step_list=ckpt_step_list)
 

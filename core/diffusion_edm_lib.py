@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch.optim import Adam
+from torch.optim import Adam, AdamW
 from tqdm.auto import trange, tqdm
 
 # EDM loss
@@ -134,7 +134,8 @@ def train_score_model_custom_loss(X_train_tsr, score_model_td, loss_fn,
                    callback_step_list=[],
                    save_ckpts=False,
                    save_ckpt_step_list=[],
-                   ckpt_dir=None):
+                   ckpt_dir=None,
+                   weight_decay=0.0):
     """
     Trains a score model using a custom loss function with an optional callback.
 
@@ -169,7 +170,11 @@ def train_score_model_custom_loss(X_train_tsr, score_model_td, loss_fn,
     ndim = X_train_tsr.shape[1]
     score_model_td.to(device)
     X_train_tsr = X_train_tsr.to(device)
-    optim = Adam(score_model_td.parameters(), lr=lr)
+    # Use AdamW when weight_decay > 0 (decoupled weight decay); Adam otherwise
+    if weight_decay > 0:
+        optim = AdamW(score_model_td.parameters(), lr=lr, weight_decay=weight_decay)
+    else:
+        optim = Adam(score_model_td.parameters(), lr=lr)
     pbar = trange(nepochs)
     score_model_td.train()
     loss_traj = []
