@@ -392,7 +392,7 @@ def ham_at_transition_summary(windows):
 def plot_ham_before_after(ham_before, ham_after, n_bits,
                           ax=None, title='',
                           max_points=400, jitter=0.18,
-                          cmap='RdPu', rng=None):
+                          cmap='Spectral_r', rng=None):
     """
     Paired jitter plot showing Hamming distance BEFORE and AFTER a transition,
     with lines connecting each pair colored by the number of bits that flipped.
@@ -466,11 +466,16 @@ def plot_ham_before_after(ham_before, ham_after, n_bits,
     ax.scatter(x_after,  ham_after,  c=colors, s=12, zorder=2,
                edgecolors='none', alpha=0.6, marker='D')
 
-    # mean markers
-    ax.hlines(ham_before.mean(), -jitter*2, jitter*2,
-              colors='steelblue', lw=2.5, zorder=3, label=f'mean before={ham_before.mean():.2f}')
-    ax.hlines(ham_after.mean(),  1-jitter*2, 1+jitter*2,
-              colors='tomato', lw=2.5, zorder=3, label=f'mean after={ham_after.mean():.2f}')
+    # mean ± SEM markers (shifted slightly inward to avoid collision)
+    mu_b, sem_b = ham_before.mean(), ham_before.std() / np.sqrt(n_shown)
+    mu_a, sem_a = ham_after.mean(),  ham_after.std()  / np.sqrt(n_shown)
+    x_mb, x_ma = -0.12, 1.12   # shifted outward from the jitter cloud
+    ax.errorbar(x_mb, mu_b, yerr=sem_b, fmt='o', color='steelblue',
+                ms=8, capsize=5, lw=2.5, zorder=4,
+                label=f'mean before={mu_b:.2f} ± {sem_b:.2f}')
+    ax.errorbar(x_ma, mu_a, yerr=sem_a, fmt='D', color='tomato',
+                ms=8, capsize=5, lw=2.5, zorder=4,
+                label=f'mean after={mu_a:.2f} ± {sem_a:.2f}')
 
     # stats test (use full arrays, not subsampled)
     n_valid = len(np.asarray(ham_before))
