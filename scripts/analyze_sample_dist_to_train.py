@@ -166,12 +166,25 @@ def run(exp_name, saveroot, stride=5, overwrite=False):
     traj_state     = classify_trajectories(is_valid, is_mem)
     first_mem_ep   = first_epoch_where(is_mem,   epochs)
     first_valid_ep = first_epoch_where(is_valid, epochs)
-    # Flickering score: std of is_valid over 2nd half of training
-    half = T // 2
-    flicker_score = is_valid[half:].astype(np.float32).std(axis=0)   # (N,)
+
+    # Flickering score 1: std of is_valid in the LAST 1/5 of training
+    tail_start = T - max(1, T // 5)
+    flicker_score_tail = is_valid[tail_start:].astype(np.float32).std(axis=0)  # (N,)
+
+    # Flickering score 2: std of is_valid AFTER memorization ratio rises above threshold
+    mem_ratio   = is_mem.mean(axis=1)       # (T,) global mem ratio at each checkpoint
+    onset_mask  = mem_ratio >= 0.1
+    if onset_mask.any():
+        t_onset       = int(np.argmax(onset_mask))   # first t where ratio >= 0.1
+        mem_onset_epoch = int(epochs[t_onset])
+    else:
+        t_onset         = 0
+        mem_onset_epoch = -1   # never reached 0.1
+    flicker_score_post_mem = is_valid[t_onset:].astype(np.float32).std(axis=0)  # (N,)
 
     print(f"  Traj states: stuck={( traj_state==0).sum()}  flicker={(traj_state==1).sum()}  "
           f"novel={(traj_state==2).sum()}  mem={(traj_state==3).sum()}")
+    print(f"  Mem onset (>=10%): epoch={mem_onset_epoch}  (t_idx={t_onset}/{T})")
 
     # Discover and subsample checkpoint files
     entries     = get_sorted_pt_files(samples_dir)
@@ -212,10 +225,14 @@ def run(exp_name, saveroot, stride=5, overwrite=False):
         nearest_idx_ham = nearest_idx_ham,
         nearest_idx_l2  = nearest_idx_l2,
         # per-sample trajectory  (N,)
-        traj_state      = traj_state,       # 0=stuck 1=flicker 2=novel 3=mem
-        first_mem_ep    = first_mem_ep,     # first epoch memorized, -1=never
-        first_valid_ep  = first_valid_ep,   # first epoch valid, -1=never
-        flicker_score   = flicker_score,    # std(is_valid) in 2nd half
+        traj_state             = traj_state,             # 0=stuck 1=flicker 2=novel 3=mem
+        first_mem_ep           = first_mem_ep,           # first epoch memorized, -1=never
+        first_valid_ep         = first_valid_ep,         # first epoch valid, -1=never
+        flicker_score_tail     = flicker_score_tail,     # std(is_valid) in last 1/5
+        flicker_score_post_mem = flicker_score_post_mem, # std(is_valid) after mem onset
+        # memorization onset (scalar)
+        mem_onset_epoch        = np.int64(mem_onset_epoch),  # epoch when global mem >= 10%
+        mem_onset_t_idx        = np.int64(t_onset),          # checkpoint index of onset
     )
     print(f"  Saved -> {out_path}  ({os.path.getsize(out_path)/1e6:.1f} MB)")
 
@@ -224,8 +241,8 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--exp_name',  required=True)
     p.add_argument('--saveroot',  default=DEFAULT_SAVEROOT)
-    p.add_argument('--stride',    type=int, default=5,
-                   help='Process every Nth checkpoint (default 5 → ~300 pts)')
+    p.add_argument('--stride',    type=int, default=1,
+                   help='Process every Nth checkpoint (default 1 = all checkpoints)')
     p.add_argument('--overwrite', action='store_true')
     return p.parse_args()
 
