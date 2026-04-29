@@ -100,7 +100,7 @@ def savefig(fig, figdir, name, exp_name):
 
 # ── Figure 1: Overview ────────────────────────────────────────────────────────
 
-def plot_overview(d, exp_name, figdir):
+def plot_overview(d, exp_name, figdir=None, save=True):
     epochs      = d['epochs']
     change_rate = d['change_rate']
     n_bits      = d['n_bits_changed']
@@ -188,14 +188,15 @@ def plot_overview(d, exp_name, figdir):
     for ax in axes:
         ax.set_xscale('log')
     plt.tight_layout(rect=[0, 0, 1, 0.97])
-    savefig(fig, figdir, 'evolution_overview', exp_name)
-    plt.close(fig)
-    print(f"  Saved: evolution_overview")
+    if save:
+        savefig(fig, figdir, 'evolution_overview', exp_name)
+        plt.close(fig)
+        print(f"  Saved: evolution_overview")
 
 
 # ── Figure 2: State transitions ───────────────────────────────────────────────
 
-def plot_transitions(d, exp_name, figdir):
+def plot_transitions(d, exp_name, figdir=None, save=True):
     epochs   = d['epochs']
     is_valid = d['is_valid']
     is_mem   = d['is_mem']
@@ -259,14 +260,15 @@ def plot_transitions(d, exp_name, figdir):
     for ax in axes:
         ax.set_xscale('log')
     plt.tight_layout(rect=[0, 0, 1, 0.97])
-    savefig(fig, figdir, 'state_transitions', exp_name)
-    plt.close(fig)
-    print(f"  Saved: state_transitions")
+    if save:
+        savefig(fig, figdir, 'state_transitions', exp_name)
+        plt.close(fig)
+        print(f"  Saved: state_transitions")
 
 
 # ── Figure 3: Per-sample raster ───────────────────────────────────────────────
 
-def plot_raster(d, exp_name, figdir):
+def plot_raster(d, exp_name, figdir=None, save=True):
     epochs    = d['epochs']
     is_valid  = d['is_valid']
     is_mem    = d['is_mem']
@@ -325,9 +327,10 @@ def plot_raster(d, exp_name, figdir):
     ax.legend(handles=legend_els, fontsize=8, loc='upper left', framealpha=0.7)
 
     plt.tight_layout()
-    savefig(fig, figdir, 'state_raster_4state', exp_name)
-    plt.close(fig)
-    print(f"  Saved: state_raster_4state")
+    if save:
+        savefig(fig, figdir, 'state_raster_4state', exp_name)
+        plt.close(fig)
+        print(f"  Saved: state_raster_4state")
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
