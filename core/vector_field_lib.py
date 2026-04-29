@@ -21,6 +21,7 @@ Visualization strategies:
 import os
 import sys
 import json
+import hashlib
 import numpy as np
 import torch
 
@@ -274,22 +275,86 @@ def denoiser_pull(D_flat, x_flat, axis1_idx, axis2_idx):
     return diff[..., axis1_idx], diff[..., axis2_idx]
 
 
+# ── Cache helpers ─────────────────────────────────────────────────────────────
+
+def make_plane_hash(*anchor_arrays):
+    """
+    Compute a short (12-char) hex hash from one or more anchor arrays that
+    define a 2D plane slice.  Stable across runs for the same inputs.
+
+    Usage examples
+    --------------
+    # group-plane (baseline + group_bits list):
+    h = make_plane_hash(x_baseline, np.array(group_bits))
+
+    # two-sample plane:
+    h = make_plane_hash(x_a, x_b)
+
+    # three-sample plane:
+    h = make_plane_hash(x_a, x_b, x_c)
+
+    Convention
+    ----------
+    Each array is converted to float32, raveled, and appended in order.
+    A separator of NaN bytes is inserted between arrays to avoid collisions
+    when arrays have different lengths but concatenate to the same bytes.
+    """
+    h = hashlib.md5()
+    SEP = np.array([np.nan], dtype=np.float32).tobytes()
+    for i, arr in enumerate(anchor_arrays):
+        arr = np.asarray(arr, dtype=np.float32).ravel()
+        if i > 0:
+            h.update(SEP)
+        h.update(arr.tobytes())
+    return h.hexdigest()[:12]
+
+
 # ── High-level evaluation on a 2D grid ───────────────────────────────────────
 
-def eval_field_on_grid(model, grid_x, sigma, device='cpu', batch_size=1024):
+def eval_field_on_grid(model, grid_x, sigma, device='cpu', batch_size=1024,
+                       cache_dir=None, cache_key=None):
     """
     Evaluate denoiser and score on a (n1, n2, D) grid.
+
+    Caching
+    -------
+    If both `cache_dir` and `cache_key` are provided the result is saved to:
+        {cache_dir}/vf_{cache_key}_sig{sigma:.4f}_n{n1}.npz
+    and loaded from there on subsequent calls.
+
+    Build the cache_key with make_plane_hash():
+        # two-anchor plane:
+        key = make_plane_hash(x_a, x_b)
+
+        # group-plane:
+        key = make_plane_hash(x_baseline, np.array(group_bits))
+
+    The sigma and grid resolution are always included in the filename so
+    different sigmas/resolutions never collide.
 
     Returns
     -------
     result dict with keys:
-      'D'       : (n1, n2, D)  denoiser output
-      'score'   : (n1, n2, D)  score = (D - x) / σ²
-      'D_pull'  : (n1, n2, D)  D - x  (denoiser displacement)
-      'mag_score' : (n1, n2)   ||score||
-      'mag_pull'  : (n1, n2)   ||D - x||
+      'x'         : (n1, n2, D)  grid inputs
+      'D'         : (n1, n2, D)  denoiser output
+      'score'     : (n1, n2, D)  score = (D - x) / σ²
+      'D_pull'    : (n1, n2, D)  D - x  (denoiser displacement)
+      'mag_score' : (n1, n2)     ||score||
+      'mag_pull'  : (n1, n2)     ||D - x||
     """
     n1, n2, D = grid_x.shape
+
+    # ── try loading from cache ───────────────────────────────────────────────
+    cache_path = None
+    if cache_dir is not None and cache_key is not None:
+        os.makedirs(cache_dir, exist_ok=True)
+        fname = f"vf_{cache_key}_sig{sigma:.4f}_n{n1}.npz"
+        cache_path = os.path.join(cache_dir, fname)
+        if os.path.exists(cache_path):
+            data = np.load(cache_path)
+            return {k: data[k] for k in data.files}
+
+    # ── compute ──────────────────────────────────────────────────────────────
     x_flat = torch.from_numpy(grid_x.reshape(-1, D).astype(np.float32))
 
     score_np, D_np = eval_score(model, x_flat, sigma, device, batch_size)
@@ -297,14 +362,20 @@ def eval_field_on_grid(model, grid_x, sigma, device='cpu', batch_size=1024):
     D_np      = D_np.reshape(n1, n2, D)
     D_pull_np = D_np - grid_x
 
-    return dict(
-        x      = grid_x,
-        D      = D_np,
-        score  = score_np,
-        D_pull = D_pull_np,
+    result = dict(
+        x         = grid_x,
+        D         = D_np,
+        score     = score_np,
+        D_pull    = D_pull_np,
         mag_score = np.linalg.norm(score_np, axis=-1),
         mag_pull  = np.linalg.norm(D_pull_np, axis=-1),
     )
+
+    # ── save to cache ─────────────────────────────────────────────────────────
+    if cache_path is not None:
+        np.savez_compressed(cache_path, **result)
+
+    return result
 
 
 # ── Plotting ──────────────────────────────────────────────────────────────────
