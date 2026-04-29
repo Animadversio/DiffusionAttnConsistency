@@ -887,6 +887,7 @@ def plot_ham_compare(ham_a, ham_b, label_a='group A', label_b='group B',
     print(f'  {label_a}: n={len(ham_a)}, μ={ham_a.mean():.4f}, med={np.median(ham_a):.1f}, std={ham_a.std():.4f}')
     print(f'  {label_b}: n={len(ham_b)}, μ={ham_b.mean():.4f}, med={np.median(ham_b):.1f}, std={ham_b.std():.4f}')
     print(f'  Mann-Whitney U={stat:.6e}, {pstr}')
+    ax.xaxis.set_major_locator(plt.MaxNLocator(integer=True))
     ax.set_xlabel('Hamming distance to nearest training sample', fontsize=10)
     ax.set_ylabel('Probability', fontsize=10)
     ax.spines['top'].set_visible(False)
