@@ -115,49 +115,51 @@ def build_state(is_valid, is_mem, has_ambiguous):
 
 # ── Transition masks ──────────────────────────────────────────────────────────
 
-def make_transition_mask(is_valid, is_mem, src, dst):
+def make_transition_mask(is_valid, is_mem, src, dst, has_ambiguous=None):
     """
     Boolean mask (T-1, N) for samples transitioning from state `src` to `dst`
     between checkpoint t and t+1.
 
     States: 0=ambig-invalid, 1=rule-invalid, 2=valid-novel, 3=memorized
     For convenience src/dst can also be string shorthands:
-      'v'  = valid novel (state 2)
-      'm'  = memorized   (state 3)
-      'i'  = any invalid (state 0 or 1)
-      'ia' = ambig-invalid (state 0)
-      'ir' = rule-invalid  (state 1)
+      'v'  = valid novel     (state 2)
+      'm'  = memorized       (state 3)
+      'i'  = any invalid     (state 0 or 1)
+      'ia' = ambig-invalid   (state 0, requires has_ambiguous)
+      'ir' = rule-invalid    (state 1, requires has_ambiguous)
+
+    Parameters
+    ----------
+    has_ambiguous : (T, N) bool or None
+        If None, 'ia' / 'ir' / state 0 / state 1 all fall back to ~is_valid.
     """
-    def _mask(s):
-        if   s == 'v':  return  is_valid[:-1] & ~is_mem[:-1]
-        elif s == 'm':  return  is_mem[:-1]
-        elif s == 'i':  return ~is_valid[:-1]
-        elif s == 'ia': return ~is_valid[:-1]   # has_ambig not available here
-        elif s == 'ir': return ~is_valid[:-1]
-        elif s == 0:    return ~is_valid[:-1]
-        elif s == 2:    return  is_valid[:-1] & ~is_mem[:-1]
-        elif s == 3:    return  is_mem[:-1]
+    # pull slices once for clarity
+    v,  v1  = is_valid[:-1],       is_valid[1:]
+    m,  m1  = is_mem[:-1],         is_mem[1:]
+    if has_ambiguous is not None:
+        a,  a1 = has_ambiguous[:-1], has_ambiguous[1:]
+    else:
+        a = a1 = None
+
+    def _at(s, vt, mt, at):
+        """State mask at a single time slice."""
+        if   s in ('v',  2):  return  vt & ~mt
+        elif s in ('m',  3):  return  mt
+        elif s in ('i',):     return ~vt
+        elif s in ('ia', 0):
+            return (~vt &  at) if at is not None else ~vt
+        elif s in ('ir', 1):
+            return (~vt & ~at) if at is not None else ~vt
         raise ValueError(f"Unknown state {s!r}")
 
-    def _mask_next(s):
-        if   s == 'v':  return  is_valid[1:] & ~is_mem[1:]
-        elif s == 'm':  return  is_mem[1:]
-        elif s == 'i':  return ~is_valid[1:]
-        elif s == 'ia': return ~is_valid[1:]
-        elif s == 'ir': return ~is_valid[1:]
-        elif s == 0:    return ~is_valid[1:]
-        elif s == 2:    return  is_valid[1:] & ~is_mem[1:]
-        elif s == 3:    return  is_mem[1:]
-        raise ValueError(f"Unknown state {s!r}")
-
-    return _mask(src) & _mask_next(dst)
+    return _at(src, v, m, a) & _at(dst, v1, m1, a1)
 
 
 # ── Hamming at valid→memorized transitions ────────────────────────────────────
 
 def ham_at_transition_by_window(ham, epochs_sub, is_valid, is_mem,
                                 n_windows=6, log_time=True,
-                                src='v', dst='m'):
+                                src='v', dst='m', has_ambiguous=None):
     """
     Split training into time windows and, within each window, collect the
     Hamming distance to the nearest training sample at the moment a sample
@@ -167,13 +169,14 @@ def ham_at_transition_by_window(ham, epochs_sub, is_valid, is_mem,
 
     Parameters
     ----------
-    ham        : (T, N) int16   nearest Hamming to training set
-    epochs_sub : (T,)   int64   epoch at each checkpoint (must align with ham)
-    is_valid   : (T, N) bool
-    is_mem     : (T, N) bool
-    n_windows  : int            number of time windows
-    log_time   : bool           split windows in log-epoch space
-    src, dst   : str or int     source/destination state (see make_transition_mask)
+    ham           : (T, N) int16   nearest Hamming to training set
+    epochs_sub    : (T,)   int64   epoch at each checkpoint (must align with ham)
+    is_valid      : (T, N) bool
+    is_mem        : (T, N) bool
+    n_windows     : int            number of time windows
+    log_time      : bool           split windows in log-epoch space
+    src, dst      : str or int     source/destination state (see make_transition_mask)
+    has_ambiguous : (T, N) bool or None  required for 'ia'/'ir'/state-0/1 transitions
 
     Returns
     -------
@@ -190,8 +193,8 @@ def ham_at_transition_by_window(ham, epochs_sub, is_valid, is_mem,
     assert ham.shape == (T, N), \
         f"ham shape {ham.shape} must match is_valid shape {(T, N)}"
 
-    trans = make_transition_mask(is_valid, is_mem, src, dst)  # (T-1, N)
-    ham_before = ham[:-1]                                      # (T-1, N)
+    trans = make_transition_mask(is_valid, is_mem, src, dst, has_ambiguous)  # (T-1, N)
+    ham_before = ham[:-1]                                                     # (T-1, N)
 
     # time window edges
     if log_time:
@@ -227,20 +230,21 @@ def ham_at_transition_by_window(ham, epochs_sub, is_valid, is_mem,
 
 def ham_at_transition_single_window(ham, epochs_sub, is_valid, is_mem,
                                     ep_lo=None, ep_hi=None,
-                                    src='v', dst='m'):
+                                    src='v', dst='m', has_ambiguous=None):
     """
     Collect Hamming distances at transitions from state `src` → `dst`
     within a single epoch interval [ep_lo, ep_hi).
 
     Parameters
     ----------
-    ham        : (T, N) int16   nearest Hamming to training set
-    epochs_sub : (T,)   int64   epoch at each checkpoint
-    is_valid   : (T, N) bool
-    is_mem     : (T, N) bool
-    ep_lo      : float or None  start epoch (None = beginning)
-    ep_hi      : float or None  end epoch   (None = end)
-    src, dst   : str or int     source/destination state (see make_transition_mask)
+    ham           : (T, N) int16   nearest Hamming to training set
+    epochs_sub    : (T,)   int64   epoch at each checkpoint
+    is_valid      : (T, N) bool
+    is_mem        : (T, N) bool
+    ep_lo         : float or None  start epoch (None = beginning)
+    ep_hi         : float or None  end epoch   (None = end)
+    src, dst      : str or int     source/destination state (see make_transition_mask)
+    has_ambiguous : (T, N) bool or None  required for 'ia'/'ir'/state-0/1 transitions
 
     Returns
     -------
@@ -260,8 +264,8 @@ def ham_at_transition_single_window(ham, epochs_sub, is_valid, is_mem,
     assert ham.shape == (T, N), \
         f"ham shape {ham.shape} must match is_valid shape {(T, N)}"
 
-    trans      = make_transition_mask(is_valid, is_mem, src, dst)  # (T-1, N)
-    ham_before = ham[:-1]                                           # (T-1, N)
+    trans      = make_transition_mask(is_valid, is_mem, src, dst, has_ambiguous)  # (T-1, N)
+    ham_before = ham[:-1]                                                          # (T-1, N)
 
     time_sel = np.ones(T - 1, dtype=bool)
     if ep_lo is not None:
