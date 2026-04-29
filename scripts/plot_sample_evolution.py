@@ -98,6 +98,58 @@ def savefig(fig, figdir, name, exp_name):
                     dpi=150, bbox_inches='tight')
 
 
+# ── Transition matrix ─────────────────────────────────────────────────────────
+
+def compute_transition_matrix(d):
+    """
+    Compute per-step 4×4 state transition count and probability matrices.
+
+    States (rows/cols):
+        0 = Invalid, quant-ambiguous  (|x| < 0.1 for ≥1 bit)
+        1 = Invalid, rule-error       (clean quantization, wrong rule)
+        2 = Valid, novel              (rule-valid, not in training set)
+        3 = Valid, memorized          (exact match to a training sample)
+
+    Convention:
+        T_count[t, i, j]  = # samples in state i at checkpoint t
+                             that transition to state j at checkpoint t+1
+        T_prob[t, i, j]   = T_count[t, i, j] / (# samples in state i at t)
+                           = 0.0 when source population is 0
+
+        Row  = source state (FROM)
+        Col  = destination state (TO)
+        t    indexes the T-1 *transitions* between T checkpoints
+
+    Returns
+    -------
+    T_count : np.ndarray, shape (T-1, 4, 4), int32
+    T_prob  : np.ndarray, shape (T-1, 4, 4), float32
+    epochs  : np.ndarray, shape (T,),  int64   — checkpoint epochs
+    ep_mid  : np.ndarray, shape (T-1,), float64 — midpoint epoch of each transition
+    """
+    is_valid  = d['is_valid']    # (T, N) bool
+    is_mem    = d['is_mem']      # (T, N) bool
+    has_ambig = d['has_ambiguous']  # (T, N) bool
+    epochs    = d['epochs']      # (T,) int64
+
+    state = build_state(is_valid, is_mem, has_ambig)  # (T, N) int8, values 0-3
+    T, N  = state.shape
+
+    T_count = np.zeros((T - 1, 4, 4), dtype=np.int32)
+    T_prob  = np.zeros((T - 1, 4, 4), dtype=np.float32)
+
+    for i in range(4):
+        src_mask = (state[:-1] == i)          # (T-1, N) bool
+        src_pop  = src_mask.sum(axis=1)       # (T-1,) int
+        for j in range(4):
+            cnt = (src_mask & (state[1:] == j)).sum(axis=1)   # (T-1,) int
+            T_count[:, i, j] = cnt
+            T_prob[:, i, j]  = np.where(src_pop > 0, cnt / src_pop, 0.0)
+
+    ep_mid = (epochs[:-1] + epochs[1:]) / 2.0
+    return T_count, T_prob, epochs, ep_mid
+
+
 # ── Figure 1: Overview ────────────────────────────────────────────────────────
 
 def plot_overview(d, exp_name, figdir=None, save=True):
