@@ -127,11 +127,17 @@ def run(exp_name, saveroot, window=5, frame_stride=5, fps=10, dpi=120, fmt='gif'
 
     plt.close(fig)
     os.makedirs(outdir, exist_ok=True)
-    import imageio
     if fmt == 'gif':
+        import imageio
         imageio.mimwrite(out_path, frames, fps=fps, loop=0)
     else:
-        imageio.mimwrite(out_path, frames, fps=fps, codec='mpeg4', quality=7)
+        import cv2
+        h, w = frames[0].shape[:2]
+        fourcc = cv2.VideoWriter_fourcc(*'mp4v')
+        writer = cv2.VideoWriter(out_path, fourcc, fps, (w, h))
+        for frame in frames:
+            writer.write(cv2.cvtColor(frame, cv2.COLOR_RGB2BGR))
+        writer.release()
     print(f"  Saved → {out_path}  ({os.path.getsize(out_path)/1e6:.1f} MB)")
 
 
