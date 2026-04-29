@@ -477,31 +477,29 @@ def plot_ham_before_after(ham_before, ham_after, n_bits,
                 ms=8, capsize=5, lw=2.5, zorder=4,
                 label=f'mean after={mu_a:.2f} ± {sem_a:.2f}')
 
-    # stats annotation — Wilcoxon test + bit-flip stats (use full K, not subsampled)
+    # stats test + compact annotation
     diff = ham_before - ham_after
-    n_bits_full = np.asarray(n_bits) if 'n_bits' not in dir() else n_bits   # already full K
     if (diff != 0).any():
         stat, pval = wilcoxon(ham_before, ham_after, alternative='two-sided')
         pstr = f'p={pval:.2e}' if pval >= 1e-300 else 'p<1e-300'
-        wilcoxon_str = f'Wilcoxon W={stat:.0f}\n{pstr}'
     else:
-        wilcoxon_str = 'all diffs=0'
+        pstr = 'p=n/a (all diffs=0)'
 
-    annot = (
-        f'── Hamming Δ (before−after) ──\n'
-        f'  n={K}\n'
-        f'  mean={diff.mean():+.2f}  med={np.median(diff):+.2f}  std={diff.std():.2f}\n'
-        f'{wilcoxon_str}\n'
-        f'── Bits flipped ──\n'
-        f'  mean={n_bits.mean():.2f}  med={np.median(n_bits):.1f}  std={n_bits.std():.2f}\n'
-        f'  1-bit={100*(n_bits==1).mean():.1f}%  '
-        f'2-bit={100*(n_bits==2).mean():.1f}%  '
-        f'>4={100*(n_bits>4).mean():.1f}%'
-    )
+    annot = (f'n={K}  {pstr}\n'
+             f'Δham {diff.mean():+.2f}±{diff.std():.2f}\n'
+             f'bits {n_bits.mean():.1f}±{n_bits.std():.1f}')
     ax.text(0.97, 0.97, annot,
             transform=ax.transAxes, ha='right', va='top',
-            fontsize=7.5, family='monospace',
-            bbox=dict(fc='white', ec='gray', alpha=0.85, boxstyle='round,pad=0.4'))
+            fontsize=8,
+            bbox=dict(fc='white', ec='gray', alpha=0.85, boxstyle='round,pad=0.3'))
+
+    # print full stats to console
+    print(f'[{title}]  n={K}  {pstr}')
+    print(f'  Hamming before: mean={ham_before.mean():.2f} med={np.median(ham_before):.1f} std={ham_before.std():.2f}')
+    print(f'  Hamming after:  mean={ham_after.mean():.2f} med={np.median(ham_after):.1f} std={ham_after.std():.2f}')
+    print(f'  Δ (before-after): mean={diff.mean():+.2f} med={np.median(diff):+.2f} std={diff.std():.2f}')
+    print(f'  Bits flipped: mean={n_bits.mean():.2f} med={np.median(n_bits):.1f} std={n_bits.std():.2f} '
+          f'| 1-bit={100*(n_bits==1).mean():.1f}% 2-bit={100*(n_bits==2).mean():.1f}% >4={100*(n_bits>4).mean():.1f}%')
 
     # colorbar for n_bits
     sm = plt.cm.ScalarMappable(cmap=cmap_, norm=norm)
