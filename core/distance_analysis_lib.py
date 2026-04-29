@@ -875,11 +875,18 @@ def plot_ham_compare(ham_a, ham_b, label_a='group A', label_b='group B',
                  palette={label_a: colors[0], label_b: colors[1]},
                  legend=True, ax=ax)
 
-    stats_line = (f'Mann-Whitney U={stat:.2e}  {pstr}  |  '
-                  f'{label_a}: μ={ham_a.mean():.2f}  '
-                  f'{label_b}: μ={ham_b.mean():.2f}')
-    full_title = f'{title}\n{stats_line}' if title else stats_line
-    ax.set_title(full_title, fontsize=9)
+    line1 = f'{label_a} (n={len(ham_a)}): μ={ham_a.mean():.2f}, med={np.median(ham_a):.1f}, std={ham_a.std():.2f}'
+    line2 = f'{label_b} (n={len(ham_b)}): μ={ham_b.mean():.2f}, med={np.median(ham_b):.1f}, std={ham_b.std():.2f}'
+    stat_line = f'Mann-Whitney U={stat:.3e}, {pstr}'
+    subtitle = f'{line1}\n{line2}\n{stat_line}'
+    full_title = f'{title}\n{subtitle}' if title else subtitle
+    ax.set_title(full_title, fontsize=8)
+
+    # formal print for copying
+    print(f'[{title or "ham_compare"}]')
+    print(f'  {label_a}: n={len(ham_a)}, μ={ham_a.mean():.4f}, med={np.median(ham_a):.1f}, std={ham_a.std():.4f}')
+    print(f'  {label_b}: n={len(ham_b)}, μ={ham_b.mean():.4f}, med={np.median(ham_b):.1f}, std={ham_b.std():.4f}')
+    print(f'  Mann-Whitney U={stat:.6e}, {pstr}')
     ax.set_xlabel('Hamming distance to nearest training sample', fontsize=10)
     ax.set_ylabel('Probability', fontsize=10)
     ax.spines['top'].set_visible(False)
