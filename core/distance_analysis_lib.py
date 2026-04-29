@@ -225,6 +225,69 @@ def ham_at_transition_by_window(ham, epochs_sub, is_valid, is_mem,
     return windows, trans
 
 
+def ham_at_transition_single_window(ham, epochs_sub, is_valid, is_mem,
+                                    ep_lo=None, ep_hi=None,
+                                    src='v', dst='m'):
+    """
+    Collect Hamming distances at transitions from state `src` → `dst`
+    within a single epoch interval [ep_lo, ep_hi).
+
+    Parameters
+    ----------
+    ham        : (T, N) int16   nearest Hamming to training set
+    epochs_sub : (T,)   int64   epoch at each checkpoint
+    is_valid   : (T, N) bool
+    is_mem     : (T, N) bool
+    ep_lo      : float or None  start epoch (None = beginning)
+    ep_hi      : float or None  end epoch   (None = end)
+    src, dst   : str or int     source/destination state (see make_transition_mask)
+
+    Returns
+    -------
+    result : dict with keys:
+        'ham'           : (K,) int16   Hamming values in window
+        'epochs'        : (K,) int64   epoch of each transition
+        'ep_lo'         : float or None
+        'ep_hi'         : float or None
+        'label'         : str
+        'n_transitions' : int
+        'median'        : float
+        'mean'          : float
+        'pct_zero'      : float        fraction with Hamming == 0
+    trans_mask : (T-1, N) bool  full transition mask (before time windowing)
+    """
+    T, N = is_valid.shape
+    assert ham.shape == (T, N), \
+        f"ham shape {ham.shape} must match is_valid shape {(T, N)}"
+
+    trans      = make_transition_mask(is_valid, is_mem, src, dst)  # (T-1, N)
+    ham_before = ham[:-1]                                           # (T-1, N)
+
+    time_sel = np.ones(T - 1, dtype=bool)
+    if ep_lo is not None:
+        time_sel &= epochs_sub[:-1] >= ep_lo
+    if ep_hi is not None:
+        time_sel &= epochs_sub[:-1] <  ep_hi
+
+    trans_win = trans & time_sel[:, None]
+    ham_win   = ham_before[trans_win]
+    ep_win    = epochs_sub[np.where(trans_win)[0]]
+
+    lo_str = f"{ep_lo:.0f}" if ep_lo is not None else "start"
+    hi_str = f"{ep_hi:.0f}" if ep_hi is not None else "end"
+    label  = f"ep [{lo_str}, {hi_str})"
+
+    result = dict(
+        ham=ham_win, epochs=ep_win,
+        ep_lo=ep_lo, ep_hi=ep_hi, label=label,
+        n_transitions=len(ham_win),
+        median=float(np.median(ham_win)) if len(ham_win) else float('nan'),
+        mean=float(ham_win.mean())       if len(ham_win) else float('nan'),
+        pct_zero=float((ham_win == 0).mean()) if len(ham_win) else float('nan'),
+    )
+    return result, trans
+
+
 def ham_at_transition_summary(windows):
     """Print a quick text summary of Hamming values per window."""
     print(f"{'Window':<35} {'N':>6}  {'median':>7}  {'mean':>7}  {'%at0':>6}")
