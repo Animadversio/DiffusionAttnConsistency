@@ -829,3 +829,60 @@ def ham_by_state_window(ham, epochs_sub, is_valid, is_mem,
 
     combined = state_mask & time_sel[:, None]   # (T, N)
     return ham[combined]
+
+
+def plot_ham_compare(ham_a, ham_b, label_a='group A', label_b='group B',
+                     ax=None, title='', colors=('#4C72B0', '#DD8452')):
+    """
+    Compare two Hamming distance distributions with a dodged histogram
+    and Mann-Whitney U test annotation.
+
+    Parameters
+    ----------
+    ham_a, ham_b : array-like  int   Hamming values for each group
+    label_a, label_b : str           legend labels
+    ax           : matplotlib Axes or None
+    title        : str               figure title (test stats appended as subtitle)
+    colors       : tuple of 2 str   bar colors for group A and B
+
+    Returns
+    -------
+    fig, ax
+    """
+    import pandas as pd
+    import seaborn as sns
+    from scipy.stats import mannwhitneyu
+
+    ham_a = np.asarray(ham_a).ravel()
+    ham_b = np.asarray(ham_b).ravel()
+
+    stat, pval = mannwhitneyu(ham_a, ham_b, alternative='two-sided')
+    pstr = f'p={pval:.2e}' if pval >= 1e-300 else 'p<1e-300'
+
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(5, 4))
+    else:
+        fig = ax.figure
+
+    df = pd.concat([
+        pd.DataFrame({'ham': ham_a, 'type': label_a}),
+        pd.DataFrame({'ham': ham_b, 'type': label_b}),
+    ], ignore_index=True)
+
+    sns.histplot(data=df, x='ham', hue='type',
+                 multiple='dodge', stat='probability',
+                 common_norm=False, discrete=True, shrink=0.85,
+                 palette={label_a: colors[0], label_b: colors[1]},
+                 legend=True, ax=ax)
+
+    stats_line = (f'Mann-Whitney U={stat:.2e}  {pstr}  |  '
+                  f'{label_a}: μ={ham_a.mean():.2f}  '
+                  f'{label_b}: μ={ham_b.mean():.2f}')
+    full_title = f'{title}\n{stats_line}' if title else stats_line
+    ax.set_title(full_title, fontsize=9)
+    ax.set_xlabel('Hamming distance to nearest training sample', fontsize=10)
+    ax.set_ylabel('Probability', fontsize=10)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    return fig, ax
