@@ -405,3 +405,162 @@ def measure_basin_batch(
         n_samples=N,
         sigma=sigma,
     )
+
+
+# ── Plotting ──────────────────────────────────────────────────────────────────
+
+def load_per_sample_stacks_from_cache(
+    cache_dir: str,
+    epoch: int,
+    direction: str,
+    n_samples: int = 30,
+    sigma: float = 1.0,
+    n_points: int = 150,
+) -> dict:
+    """
+    Load per-sample line-cache NPZs and return stacked arrays.
+
+    Returns dict with keys 'exact_match', 'hamming', 'dist_from_start',
+    each of shape (n_samples, n_points).
+    """
+    prefix = f"ep{epoch:06d}_sig{sigma:.4f}"
+    stacks = {}
+    for idx in range(n_samples):
+        fname = os.path.join(cache_dir,
+            f"{prefix}_{direction}_xa{idx}_sig{sigma:.4f}_n{n_points}.npz")
+        raw = np.load(fname)
+        x_start = raw['x_line'][0]
+        D_out   = raw['D_out']
+        sign_start = np.sign(x_start).astype(np.int8)
+        sign_D     = np.sign(D_out).astype(np.int8)
+        for key, val in [
+            ('exact_match',
+             (sign_D == sign_start[None, :]).all(axis=1).astype(np.float32)),
+            ('hamming',
+             (sign_D != sign_start[None, :]).sum(axis=1).astype(np.float32)),
+            ('dist_from_start',
+             np.linalg.norm(D_out - x_start[None, :], axis=1).astype(np.float32)),
+        ]:
+            stacks.setdefault(key, []).append(val)
+    return {k: np.stack(v, axis=0) for k, v in stacks.items()}
+
+
+def basin_plot_profiles(
+    cache_dir: str,
+    epochs: list,
+    epoch_labels: Optional[dict] = None,
+    epoch_colors: Optional[dict] = None,
+    sigma: float = 1.0,
+    n_samples: int = 30,
+    n_points: int = 150,
+    n_bootstrap: int = 2000,
+    ci: tuple = (5, 95),
+    directions: tuple = ('invalid', 'valid_novel', 'other_train'),
+    col_titles: Optional[list] = None,
+    title: Optional[str] = None,
+    figsize: tuple = (13, 10),
+) -> 'plt.Figure':
+    """
+    Plot 3×3 basin profile grid (directions as columns, metrics as rows).
+
+    Rows:
+      0 — Exact bit match (all bits agree with x_a)
+      1 — Hamming distance (# bits changed from x_a)
+      2 — Denoiser L2 distance from x_a
+
+    Columns: invalid, valid_novel, other_train directions.
+
+    Shading: bootstrap CI of the mean (ci=(lo_pct, hi_pct)).
+
+    Parameters
+    ----------
+    cache_dir    : directory containing per-line NPZ cache files
+    epochs       : list of int — checkpoint epochs to overlay
+    epoch_labels : dict {epoch: str} — line labels; defaults to "ep {epoch}"
+    epoch_colors : dict {epoch: color} — line colors; defaults to matplotlib tab10
+    sigma        : noise level used during caching
+    n_samples    : number of training samples (must match cache)
+    n_points     : number of t-values (must match cache)
+    n_bootstrap  : bootstrap resamples for CI
+    ci           : (lo_pct, hi_pct) percentiles for CI band
+
+    Returns
+    -------
+    fig : matplotlib Figure
+    """
+    import matplotlib.pyplot as plt
+
+    rng = np.random.default_rng(42)
+
+    if epoch_labels is None:
+        epoch_labels = {ep: f"ep {ep:,}" for ep in epochs}
+    if epoch_colors is None:
+        colors = plt.cm.tab10(np.linspace(0, 0.9, len(epochs)))
+        epoch_colors = {ep: colors[i] for i, ep in enumerate(epochs)}
+    if col_titles is None:
+        col_titles = [
+            'Toward invalid\n(Hamming-1)',
+            'Toward valid-novel\n(Hamming-2)',
+            'Toward other training\n(nearest Hamming)',
+        ]
+
+    row_titles = [
+        'Exact bit match\n(all bits)',
+        'Hamming distance\n(# bits changed from $x_a$)',
+        r'Denoiser L2  $\|D(x,\sigma)-x_a\|$',
+    ]
+    metrics = ['exact_match', 'hamming', 'dist_from_start']
+
+    # Load all stacks
+    all_stacks = {}
+    for ep in epochs:
+        all_stacks[ep] = {}
+        for direction in directions:
+            all_stacks[ep][direction] = load_per_sample_stacks_from_cache(
+                cache_dir, ep, direction, n_samples, sigma, n_points)
+
+    # t_vals from first file
+    first_ep  = epochs[0]
+    first_dir = directions[0]
+    prefix = f"ep{first_ep:06d}_sig{sigma:.4f}"
+    t_vals = np.load(os.path.join(cache_dir,
+        f"{prefix}_{first_dir}_xa0_sig{sigma:.4f}_n{n_points}.npz"))['t_vals']
+
+    fig, axes = plt.subplots(3, len(directions), figsize=figsize, sharex=True)
+
+    for ri, metric in enumerate(metrics):
+        for ci_idx, direction in enumerate(directions):
+            ax = axes[ri, ci_idx]
+            for ep in epochs:
+                stk = all_stacks[ep][direction][metric]  # (N, T)
+                N = stk.shape[0]
+                mean = stk.mean(axis=0)
+                idxs = rng.integers(0, N, size=(n_bootstrap, N))
+                boot = stk[idxs, :].mean(axis=1)
+                lo_band = np.percentile(boot, ci[0], axis=0)
+                hi_band = np.percentile(boot, ci[1], axis=0)
+                color = epoch_colors[ep]
+                ax.plot(t_vals, mean, color=color, lw=2.0, label=epoch_labels[ep])
+                ax.fill_between(t_vals, lo_band, hi_band, color=color, alpha=0.25)
+
+            ax.axvline(0, color='k', lw=0.8, ls='--', alpha=0.4)
+            ax.axvline(1, color='gray', lw=0.8, ls=':', alpha=0.4)
+            if metric == 'exact_match':
+                ax.set_ylim(-0.05, 1.05)
+            if ri == 0:
+                ax.set_title(col_titles[ci_idx], fontsize=11, fontweight='bold')
+            if ci_idx == 0:
+                ax.set_ylabel(row_titles[ri], fontsize=10)
+            if ri == 2:
+                ax.set_xlabel('t  (0=x_a, 1=endpoint)', fontsize=9)
+            ax.spines['right'].set_visible(False)
+            ax.spines['top'].set_visible(False)
+
+    axes[0, -1].legend(fontsize=8, loc='upper right')
+
+    if title is None:
+        title = (f"Attractor basin profiles  σ={sigma}  N={n_samples} samples  "
+                 f"(shading: {ci[0]}–{ci[1]}% CI of mean, bootstrap)")
+    fig.suptitle(title, fontsize=12, y=1.01)
+    fig.tight_layout()
+    return fig

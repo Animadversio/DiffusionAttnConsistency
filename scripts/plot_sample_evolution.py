@@ -540,6 +540,7 @@ def plot_raster(d, exp_name, figdir=None, save=True):
         savefig(fig, figdir, 'state_raster_4state', exp_name)
         plt.close(fig)
         print(f"  Saved: state_raster_4state")
+    return fig
 
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
