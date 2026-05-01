@@ -104,8 +104,8 @@ def main():
     for epoch in args.epochs:
         print(f"\n{'='*60}")
         print(f"Checkpoint epoch {epoch}")
-        model = load_model(args.exp_name, epoch, device=args.device,
-                           saveroot=args.saveroot)
+        model, _, _ = load_model(args.exp_name, epoch, device=args.device,
+                                  saveroot=args.saveroot)
         model.eval()
 
         for sigma in args.sigma:
