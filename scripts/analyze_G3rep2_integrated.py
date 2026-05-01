@@ -84,7 +84,7 @@ SPLIT_STYLES = {
 
 def savefig_both(fig, figdir, name):
     for ext in ('.png', '.pdf'):
-        fig.savefig(os.path.join(figdir, name + ext), dpi=150, bbox_inches='tight')
+        fig.savefig(os.path.join(figdir, name + ext), dpi=300, bbox_inches='tight')
     print(f"  → {name}.png/pdf")
 
 
@@ -174,7 +174,9 @@ def panel3_vector_field(figdir):
 
         # Row 0: score magnitude + displacement arrows
         ax0 = axes[0, ei]
-        ax0.pcolormesh(alpha_ax, beta_ax, score_mag.T, cmap='magma', shading='auto')
+        ax0.pcolormesh(alpha_ax, beta_ax, score_mag.T, cmap='magma', shading='auto',
+                       rasterized=True, zorder=0)
+        ax0.set_rasterization_zorder(1)
         stride = max(1, NGRID // 12)
         ax0.quiver(A_g[::stride, ::stride], B_g[::stride, ::stride],
                    disp_u[::stride, ::stride], disp_v[::stride, ::stride],
@@ -193,7 +195,9 @@ def panel3_vector_field(figdir):
         vmax = float(np.percentile(np.abs(Du_proj), 95))
         ax1 = axes[1, ei]
         ax1.pcolormesh(alpha_ax, beta_ax, Du_proj.T,
-                       cmap='RdBu_r', vmin=-vmax, vmax=vmax, shading='auto')
+                       cmap='RdBu_r', vmin=-vmax, vmax=vmax, shading='auto',
+                       rasterized=True, zorder=0)
+        ax1.set_rasterization_zorder(1)
         ax1.contour(alpha_ax, beta_ax, Du_proj.T, levels=[0],
                     colors='k', linewidths=0.8)
         for mx, my, mlbl, mc in markers:

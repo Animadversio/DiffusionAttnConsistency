@@ -95,7 +95,7 @@ def savefig(fig, figdir, name, exp_name):
     tag = exp_name.replace('DiT_mini_', '')
     for ext in ['png', 'pdf']:
         fig.savefig(os.path.join(figdir, f'{name}_{tag}.{ext}'),
-                    dpi=150, bbox_inches='tight')
+                    dpi=300, bbox_inches='tight')
 
 
 # ── Transition matrix ─────────────────────────────────────────────────────────
@@ -537,7 +537,8 @@ def plot_raster(d, exp_name, figdir=None, save=True,
     # Panel 2: raster
     ax = axes[1]
     ax.pcolormesh(x_lin, y_edges, state_sorted.T.astype(float),
-                  cmap=cmap, norm=norm, rasterized=True)
+                  cmap=cmap, norm=norm, rasterized=True, zorder=0)
+    ax.set_rasterization_zorder(1)
     ax.set_xscale('log')
     ax.set_xlim(x_lin[0], x_lin[-1]); ax.set_ylim(0, N)
     ax.set_xlabel('Training step', fontsize=10)
@@ -612,7 +613,8 @@ def plot_raster_custom_order(d, sort_idxs, sort_str="custom order",
 
     fig, ax = plt.subplots(figsize=figsize)
     ax.pcolormesh(x_lin, y_edges, state_sorted.T.astype(float),
-                  cmap=cmap, norm=norm, rasterized=True)
+                  cmap=cmap, norm=norm, rasterized=True, zorder=0)
+    ax.set_rasterization_zorder(1)
     ax.set_xscale('log')
     ax.set_xlim(x_lin[0], x_lin[-1])
     ax.set_ylim(0, N)
