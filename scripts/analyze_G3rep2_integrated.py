@@ -273,7 +273,7 @@ def parse_args():
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument('--figdir', default=os.path.join(
         "/n/home12/binxuwang/Github/DiffusionAttnConsistency",
-        "figures", "G3rep2_analysis"))
+        "figures", "RuleMemDeepDive", "DiT_mini_G3_N4096_rep2"))
     return p.parse_args()
 
 
