@@ -543,6 +543,69 @@ def plot_raster(d, exp_name, figdir=None, save=True):
     return fig
 
 
+def plot_raster_custom_order(d, sort_idxs, sort_str="custom order",
+                             figsize=(13, 5), save=False,
+                             figdir=None, exp_name=''):
+    """
+    Plot a per-sample state raster with a caller-supplied sample ordering.
+
+    Unlike plot_raster() — which sorts by final state / first-memorized epoch —
+    this function lets you pass any permutation of sample indices so you can
+    order rows by an external criterion (e.g. nearest-Hamming distance to
+    training set, arrival time, or cluster assignment).
+
+    Parameters
+    ----------
+    d         : dict  — output of load_data(); must contain 'epochs', 'is_valid',
+                        'is_mem', 'has_ambiguous'
+    sort_idxs : (N,) array-like of int  — sample indices in desired row order
+                (bottom→top); e.g. np.argsort(some_metric)
+    sort_str  : str  — label describing the sort order, shown in y-axis
+    figsize   : (w, h) tuple
+    save      : bool  — if True, save PNG+PDF via savefig() helper
+    figdir    : str or None  — output directory (required when save=True)
+    exp_name  : str  — experiment name, used in title and save filename
+
+    Returns
+    -------
+    fig : matplotlib Figure
+    """
+    epochs    = d['epochs']
+    is_valid  = d['is_valid']
+    is_mem    = d['is_mem']
+    has_ambig = d['has_ambiguous']
+    T, N      = is_valid.shape
+
+    state        = build_state(is_valid, is_mem, has_ambig)   # (T, N)
+    state_sorted = state[:, sort_idxs]                         # (T, N) reordered
+
+    x_lin   = pcolormesh_edges(epochs)
+    y_edges = np.arange(N + 1)
+
+    cmap = mcolors.ListedColormap([info[2] for info in STATE_INFO])
+    norm = mcolors.BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], cmap.N)
+
+    fig, ax = plt.subplots(figsize=figsize)
+    ax.pcolormesh(x_lin, y_edges, state_sorted.T.astype(float),
+                  cmap=cmap, norm=norm, rasterized=True)
+    ax.set_xscale('log')
+    ax.set_xlim(x_lin[0], x_lin[-1])
+    ax.set_ylim(0, N)
+    ax.set_xlabel('Training step', fontsize=10)
+    ax.set_ylabel(f'Sample index (sorted: {sort_str})', fontsize=9)
+    title = f'Per-sample state raster — {exp_name}' if exp_name else 'Per-sample state raster'
+    ax.set_title(title, fontsize=9)
+
+    legend_els = [Patch(color=info[2], label=info[1]) for info in STATE_INFO]
+    ax.legend(handles=legend_els, fontsize=8, loc='upper left', framealpha=0.7)
+
+    plt.tight_layout()
+    if save:
+        savefig(fig, figdir, 'state_raster_custom_order', exp_name)
+        plt.close(fig)
+    return fig
+
+
 # ── CLI ───────────────────────────────────────────────────────────────────────
 
 def parse_args():
