@@ -570,7 +570,7 @@ def plot_raster(d, exp_name, figdir=None, save=True,
 
 
 def plot_raster_custom_order(d, sort_idxs, sort_str="custom order",
-                             figsize=(13, 5), save=False,
+                             figsize=(13, 5), save=False, legend=True,
                              figdir=None, exp_name='', backend='pcolormesh'):
     """
     Plot a per-sample state raster with a caller-supplied sample ordering.
@@ -633,8 +633,13 @@ def plot_raster_custom_order(d, sort_idxs, sort_str="custom order",
     else:
         x_lin   = pcolormesh_edges(epochs)
         y_edges = np.arange(N + 1)
-        ax.pcolormesh(x_lin, y_edges, state_sorted.T.astype(float),
-                      cmap=cmap, norm=norm, rasterized=True, zorder=0)
+        mesh = ax.pcolormesh(x_lin, y_edges, state_sorted.T.astype(float),
+                      cmap=cmap, norm=norm, rasterized=True, 
+                      antialiased=False,zorder=0, )
+                    #   shading="nearest",   # or "auto", but nearest is often safer for raster-like data
+                    #     edgecolors="none",
+                    #     linewidth=0,
+        mesh.set_rasterized(True)
         ax.set_rasterization_zorder(1)
         ax.set_xscale('log')
         ax.set_xlim(x_lin[0], x_lin[-1])
@@ -645,8 +650,9 @@ def plot_raster_custom_order(d, sort_idxs, sort_str="custom order",
     title = f'Per-sample state raster — {exp_name}' if exp_name else 'Per-sample state raster'
     ax.set_title(title, fontsize=9)
 
-    legend_els = [Patch(color=info[2], label=info[1]) for info in STATE_INFO]
-    ax.legend(handles=legend_els, fontsize=8, loc='upper left', framealpha=0.7)
+    if legend:
+        legend_els = [Patch(color=info[2], label=info[1]) for info in STATE_INFO]
+        ax.legend(handles=legend_els, fontsize=8, loc='upper left', framealpha=0.7)
 
     plt.tight_layout()
     if save:
