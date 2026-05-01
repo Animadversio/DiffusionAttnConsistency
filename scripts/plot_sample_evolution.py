@@ -571,7 +571,7 @@ def plot_raster(d, exp_name, figdir=None, save=True,
 
 def plot_raster_custom_order(d, sort_idxs, sort_str="custom order",
                              figsize=(13, 5), save=False,
-                             figdir=None, exp_name=''):
+                             figdir=None, exp_name='', backend='pcolormesh'):
     """
     Plot a per-sample state raster with a caller-supplied sample ordering.
 
@@ -591,6 +591,12 @@ def plot_raster_custom_order(d, sort_idxs, sort_str="custom order",
     save      : bool  — if True, save PNG+PDF via savefig() helper
     figdir    : str or None  — output directory (required when save=True)
     exp_name  : str  — experiment name, used in title and save filename
+    backend   : 'pcolormesh' or 'imshow'
+                'pcolormesh' — log-scale x-axis, variable-width columns per checkpoint gap.
+                'imshow'     — linear axis in log10(epoch) space; each checkpoint gets one
+                               equal-width pixel column. Visually equivalent to pcolormesh
+                               and always produces a single raster image in the PDF
+                               (Illustrator-friendly without needing rasterized=True).
 
     Returns
     -------
@@ -605,18 +611,34 @@ def plot_raster_custom_order(d, sort_idxs, sort_str="custom order",
     state        = build_state(is_valid, is_mem, has_ambig)   # (T, N)
     state_sorted = state[:, sort_idxs]                         # (T, N) reordered
 
-    x_lin   = pcolormesh_edges(epochs)
-    y_edges = np.arange(N + 1)
-
     cmap = mcolors.ListedColormap([info[2] for info in STATE_INFO])
     norm = mcolors.BoundaryNorm([-0.5, 0.5, 1.5, 2.5, 3.5], cmap.N)
 
     fig, ax = plt.subplots(figsize=figsize)
-    ax.pcolormesh(x_lin, y_edges, state_sorted.T.astype(float),
-                  cmap=cmap, norm=norm, rasterized=True, zorder=0)
-    ax.set_rasterization_zorder(1)
-    ax.set_xscale('log')
-    ax.set_xlim(x_lin[0], x_lin[-1])
+
+    if backend == 'imshow':
+        # x-axis is linear in log10(epoch) space so each column gets equal width,
+        # which is visually equivalent to pcolormesh on a log-scale x-axis.
+        log_epochs = np.log10(np.asarray(epochs, dtype=float) + 1)
+        half = (log_epochs[1] - log_epochs[0]) / 2  # half-pixel for extent
+        extent = [log_epochs[0] - half, log_epochs[-1] + half, 0, N]
+        ax.imshow(state_sorted.T.astype(float), aspect='auto', origin='lower',
+                  cmap=cmap, norm=norm, extent=extent, interpolation='nearest',
+                  rasterized=True)
+        # Annotate x-axis with actual epoch numbers (pick ~8 evenly spaced ticks)
+        tick_idxs = np.linspace(0, T - 1, min(T, 8), dtype=int)
+        ax.set_xticks(log_epochs[tick_idxs])
+        ax.set_xticklabels([f'{epochs[i]:,}' for i in tick_idxs], rotation=30, ha='right')
+        ax.set_xlim(extent[0], extent[1])
+    else:
+        x_lin   = pcolormesh_edges(epochs)
+        y_edges = np.arange(N + 1)
+        ax.pcolormesh(x_lin, y_edges, state_sorted.T.astype(float),
+                      cmap=cmap, norm=norm, rasterized=True, zorder=0)
+        ax.set_rasterization_zorder(1)
+        ax.set_xscale('log')
+        ax.set_xlim(x_lin[0], x_lin[-1])
+
     ax.set_ylim(0, N)
     ax.set_xlabel('Training step', fontsize=10)
     ax.set_ylabel(f'Sample index (sorted: {sort_str})', fontsize=9)
