@@ -477,7 +477,22 @@ def plot_transitions(d, exp_name, figdir=None, save=True):
 
 # ── Figure 3: Per-sample raster ───────────────────────────────────────────────
 
-def plot_raster(d, exp_name, figdir=None, save=True):
+def plot_raster(d, exp_name, figdir=None, save=True,
+                sort_idxs=None, sort_str=None):
+    """
+    Plot per-sample 4-state raster (stacked area + raster panels).
+
+    Parameters
+    ----------
+    d         : dict — output of load_data()
+    exp_name  : str
+    sort_idxs : (N,) array-like of int or None
+                Custom sample ordering (bottom→top). If None, uses the
+                default sort: final state ↓, first-memorized epoch ↑,
+                first-valid epoch ↑.
+    sort_str  : str or None — y-axis label describing the sort. Defaults
+                to the standard description when sort_idxs is None.
+    """
     epochs    = d['epochs']
     is_valid  = d['is_valid']
     is_mem    = d['is_mem']
@@ -485,7 +500,16 @@ def plot_raster(d, exp_name, figdir=None, save=True):
     T, N      = is_valid.shape
 
     state = build_state(is_valid, is_mem, has_ambig)
-    state_sorted, sort_key, final_state = sort_state(state, is_valid, is_mem)
+
+    if sort_idxs is None:
+        state_sorted, sort_key, final_state = sort_state(state, is_valid, is_mem)
+        ylabel = 'Sample index\n(sorted: final state ↓, first mem ↑, first valid ↑)'
+    else:
+        sort_idxs    = np.asarray(sort_idxs)
+        state_sorted = state[:, sort_idxs]
+        sort_key     = sort_idxs
+        final_state  = state[-1]
+        ylabel       = f'Sample index\n(sorted: {sort_str})' if sort_str else 'Sample index (custom order)'
 
     x_lin   = pcolormesh_edges(epochs)
     y_edges = np.arange(N + 1)
@@ -517,20 +541,21 @@ def plot_raster(d, exp_name, figdir=None, save=True):
     ax.set_xscale('log')
     ax.set_xlim(x_lin[0], x_lin[-1]); ax.set_ylim(0, N)
     ax.set_xlabel('Training step', fontsize=10)
-    ax.set_ylabel('Sample index\n(sorted: final state ↓, first mem ↑, first valid ↑)', fontsize=9)
+    ax.set_ylabel(ylabel, fontsize=9)
     ax.set_title('Per-sample state trajectory — each row = same noise seed across training', fontsize=9)
 
-    # Dividers and annotations
-    y_cursor = 0
-    for s_id, lbl, col in [(3,'Memorized','#9467bd'), (2,'Valid novel','#2ca02c'),
-                             (1,'Invalid (rule)','#d62728'), (0,'Invalid (ambig)','#ff7f0e')]:
-        count = int((final_state[sort_key] == s_id).sum())
-        ax.axhline(y_cursor + count, color='white', lw=1.0, ls='--', alpha=0.7)
-        if count > 0:
-            ax.annotate(f'{lbl}\n({count})',
-                        xy=(1.005, (y_cursor + count / 2) / N), xycoords='axes fraction',
-                        fontsize=8, color=col, va='center')
-        y_cursor += count
+    # Dividers and annotations (only meaningful for default sort)
+    if sort_idxs is None:
+        y_cursor = 0
+        for s_id, lbl, col in [(3,'Memorized','#9467bd'), (2,'Valid novel','#2ca02c'),
+                                 (1,'Invalid (rule)','#d62728'), (0,'Invalid (ambig)','#ff7f0e')]:
+            count = int((final_state[sort_key] == s_id).sum())
+            ax.axhline(y_cursor + count, color='white', lw=1.0, ls='--', alpha=0.7)
+            if count > 0:
+                ax.annotate(f'{lbl}\n({count})',
+                            xy=(1.005, (y_cursor + count / 2) / N), xycoords='axes fraction',
+                            fontsize=8, color=col, va='center')
+            y_cursor += count
 
     legend_els = [Patch(color=info[2], label=info[1]) for info in STATE_INFO]
     ax.legend(handles=legend_els, fontsize=8, loc='upper left', framealpha=0.7)
