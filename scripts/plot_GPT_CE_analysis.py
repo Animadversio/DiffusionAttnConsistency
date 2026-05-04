@@ -35,7 +35,7 @@ SPLIT_STYLES = {
     "valid_novel":  dict(color="#d73027", lw=2.0, ls="-",  label="Valid (novel)"),
     "boolean_cube": dict(color="#555555", lw=1.6, ls="--", label="Boolean cube"),
 }
-HMAP_CMAP = "inferno"   # shared colormap for all three heatmaps
+HMAP_CMAP = "inferno_r"   # shared colormap; reversed so low CE = bright, high CE = dark
 HMAP_TITLE_COLORS = {
     "train":        "#2166ac",   # blue  — matches CE curve
     "valid_novel":  "#d73027",   # red
@@ -85,9 +85,15 @@ def make_step_axis(ax, epochs):
 
 
 def heatmap_step_ticks(ax, epochs, n_ticks=6):
-    """Set x-ticks on a heatmap axes (imshow, x = checkpoint index)."""
+    """Set x-ticks on a heatmap axes (imshow, x = checkpoint index).
+    Ticks are chosen at log-uniform step values so spacing matches the top line plot."""
     n = len(epochs)
-    idxs = np.round(np.linspace(0, n - 1, min(n_ticks, n))).astype(int)
+    log_e = np.log10(np.asarray(epochs, dtype=float) + 1)
+    # Pick n_ticks positions uniformly in log space
+    tick_logvals = np.linspace(log_e[0], log_e[-1], min(n_ticks, n))
+    # Map each to nearest checkpoint index
+    idxs = np.array([np.argmin(np.abs(log_e - lv)) for lv in tick_logvals])
+    idxs = np.unique(idxs)   # deduplicate
     ax.set_xticks(idxs)
     ax.set_xticklabels([f"{epochs[i]:,}" for i in idxs], rotation=30, ha="right", fontsize=8)
     ax.set_xlabel("Step", fontsize=10)
