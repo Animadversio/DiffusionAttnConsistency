@@ -85,7 +85,8 @@ def make_step_axis(ax, epochs):
     powers, labels = _decade_ticks(epochs)
     ax.set_xticks(powers)
     ax.set_xticklabels(labels, fontsize=9)
-    ax.xaxis.set_minor_locator(mpl.ticker.NullLocator())
+    ax.xaxis.set_minor_locator(mpl.ticker.LogLocator(subs=np.arange(2, 10)))
+    ax.xaxis.set_minor_formatter(mpl.ticker.NullFormatter())
 
 
 def heatmap_step_ticks(ax, epochs):
