@@ -35,10 +35,11 @@ SPLIT_STYLES = {
     "valid_novel":  dict(color="#d73027", lw=2.0, ls="-",  label="Valid (novel)"),
     "boolean_cube": dict(color="#555555", lw=1.6, ls="--", label="Boolean cube"),
 }
-HMAP_CMAPS = {
-    "train":        "Blues",
-    "valid_novel":  "Reds",
-    "boolean_cube": "Greys",
+HMAP_CMAP = "inferno"   # shared colormap for all three heatmaps
+HMAP_TITLE_COLORS = {
+    "train":        "#2166ac",   # blue  — matches CE curve
+    "valid_novel":  "#d73027",   # red
+    "boolean_cube": "#888888",   # gray (slightly lighter than #555 for visibility on white)
 }
 HMAP_TITLES = {
     "train":        "Train",
@@ -155,13 +156,13 @@ def plot_ce_figure(exp_dir, group_size=6, n_eval=4096, suffix="",
         ax = hax[col]
         mat = pos_loss[s].T          # (36, C) → rows=position, cols=checkpoint
         im = ax.imshow(mat, aspect="auto", origin="lower",
-                       cmap=HMAP_CMAPS[s],
+                       cmap=HMAP_CMAP,
                        norm=Normalize(vmin=0, vmax=vmax),
                        interpolation="nearest")
         group_boundary_lines(ax, group_size, n_pos, orientation="horizontal")
         heatmap_step_ticks(ax, epochs)
         ax.set_ylabel("Bit position" if col == 0 else "", fontsize=10)
-        ax.set_title(HMAP_TITLES[s], fontsize=11)
+        ax.set_title(HMAP_TITLES[s], fontsize=11, color=HMAP_TITLE_COLORS[s], fontweight="bold")
         plt.colorbar(im, ax=ax, shrink=0.85, label="CE")
 
     fig.suptitle("GPT CE analysis", fontsize=12, y=1.01)
