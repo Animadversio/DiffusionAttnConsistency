@@ -35,7 +35,7 @@ SPLIT_STYLES = {
     "valid_novel":  dict(color="#d73027", lw=2.0, ls="-",  label="Valid (novel)"),
     "boolean_cube": dict(color="#555555", lw=1.6, ls="--", label="Boolean cube"),
 }
-HMAP_CMAP = "inferno_r"   # shared colormap; reversed so low CE = bright, high CE = dark
+HMAP_CMAP = "magma"   # shared colormap; reversed so low CE = bright, high CE = dark
 HMAP_TITLE_COLORS = {
     "train":        "#2166ac",   # blue  — matches CE curve
     "valid_novel":  "#d73027",   # red
@@ -68,34 +68,36 @@ def load_ce_data(exp_dir, n_eval=4096, suffix=""):
     return d
 
 
-def log_ticks(epochs, n_ticks=8):
-    """Return (positions, labels) for log-spaced x-axis ticks."""
-    idxs = np.round(np.linspace(0, len(epochs) - 1, min(n_ticks, len(epochs)))).astype(int)
-    return idxs, [f"{epochs[i]:,}" for i in idxs]
+def _decade_ticks(epochs):
+    """Return (step_values, labels) at exact powers of 10 within the epoch range."""
+    emin, emax = epochs[0], epochs[-1]
+    lo = int(np.floor(np.log10(max(emin, 1))))
+    hi = int(np.ceil(np.log10(emax)))
+    powers = [10**p for p in range(lo, hi + 1) if emin <= 10**p <= emax]
+    labels = [f"$10^{{{p}}}$" for p in range(lo, hi + 1) if emin <= 10**p <= emax]
+    return powers, labels
 
 
 def make_step_axis(ax, epochs):
-    """Configure a log-scale x-axis for training steps."""
+    """Configure a log-scale x-axis with standard 10^n ticks."""
     ax.set_xscale("log")
     ax.set_xlabel("Training step", fontsize=11)
-    tick_idxs, tick_labs = log_ticks(epochs)
-    ax.set_xticks(epochs[tick_idxs])
-    ax.set_xticklabels(tick_labs, rotation=30, ha="right", fontsize=9)
+    powers, labels = _decade_ticks(epochs)
+    ax.set_xticks(powers)
+    ax.set_xticklabels(labels, fontsize=9)
     ax.xaxis.set_minor_locator(mpl.ticker.NullLocator())
 
 
-def heatmap_step_ticks(ax, epochs, n_ticks=6):
-    """Set x-ticks on a heatmap axes (imshow, x = checkpoint index).
-    Ticks are chosen at log-uniform step values so spacing matches the top line plot."""
-    n = len(epochs)
-    log_e = np.log10(np.asarray(epochs, dtype=float) + 1)
-    # Pick n_ticks positions uniformly in log space
-    tick_logvals = np.linspace(log_e[0], log_e[-1], min(n_ticks, n))
-    # Map each to nearest checkpoint index
-    idxs = np.array([np.argmin(np.abs(log_e - lv)) for lv in tick_logvals])
-    idxs = np.unique(idxs)   # deduplicate
+def heatmap_step_ticks(ax, epochs):
+    """Set x-ticks on a heatmap axes (imshow, x = pixel index) at 10^n steps.
+    Maps each decade value to its nearest checkpoint index."""
+    epochs = np.asarray(epochs)
+    log_e  = np.log10(epochs.astype(float) + 1)
+    powers, labels = _decade_ticks(epochs)
+    # Map each power-of-10 to the nearest checkpoint pixel index
+    idxs = np.array([np.argmin(np.abs(epochs - p)) for p in powers])
     ax.set_xticks(idxs)
-    ax.set_xticklabels([f"{epochs[i]:,}" for i in idxs], rotation=30, ha="right", fontsize=8)
+    ax.set_xticklabels(labels, fontsize=8)
     ax.set_xlabel("Step", fontsize=10)
 
 
@@ -111,7 +113,7 @@ def group_boundary_lines(ax, group_size, n_pos, orientation="horizontal", lw=0.8
 # ── main figure ──────────────────────────────────────────────────────────────
 
 def plot_ce_figure(exp_dir, group_size=6, n_eval=4096, suffix="",
-                   figsize=(13, 7), dpi=150):
+                   figsize=(13, 7), dpi=150, vmax=None):
     """
     Build the 4-panel figure:
       [top-left]  CE loss vs step (3 splits)
@@ -155,7 +157,8 @@ def plot_ce_figure(exp_dir, group_size=6, n_eval=4096, suffix="",
     make_step_axis(ax_loss, epochs)
 
     # ── bottom: per-position heatmaps ────────────────────────────────────────
-    vmax = max(np.nanpercentile(pos_loss[s], 97) for s in splits)
+    if vmax is None:
+        vmax = max(np.nanpercentile(pos_loss[s], 97) for s in splits)
 
     hax = [fig.add_subplot(gs[1, c]) for c in range(3)]
     for col, s in enumerate(splits):
@@ -186,7 +189,9 @@ def parse_args():
     p.add_argument("--n_eval",     type=int, default=4096)
     p.add_argument("--suffix",     default="",
                    help="NPZ file suffix (e.g. '_v2')")
-    p.add_argument("--dpi",        type=int, default=150)
+    p.add_argument("--dpi",        type=int,   default=150)
+    p.add_argument("--vmax",       type=float, default=None,
+                   help="Color limit for heatmaps (default: 97th percentile)")
     return p.parse_args()
 
 
@@ -210,6 +215,7 @@ def main():
             n_eval=args.n_eval,
             suffix=args.suffix,
             dpi=args.dpi,
+            vmax=args.vmax,
         )
         fig.savefig(out_base + ".pdf", bbox_inches="tight")
         fig.savefig(out_base + ".png", bbox_inches="tight", dpi=args.dpi)
