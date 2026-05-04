@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__ide__executeCode",
+      "Bash(/n/home12/binxuwang/.conda/envs/torch2/bin/python *)",
+      "Bash(/n/home12/binxuwang/.conda/envs/torch2/bin/jupyter nbconvert *)"
+    ]
+  }
+}
