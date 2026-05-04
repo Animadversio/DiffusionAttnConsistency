@@ -63,6 +63,47 @@ def first_sustained_crossing(steps, vals, threshold, n_consec=5, above=True):
     return np.nan
 
 
+def load_eval_timeseries(exp_name, saveroot):
+    """Load full eval time series for one experiment.
+
+    Handles both formats automatically:
+      - TensorBoard (newer GPT / DiT sweep runs)
+      - mem_eval_stats.csv (older DiT baseline runs)
+
+    Returns
+    -------
+    dict with keys:
+      eval_steps : np.ndarray (T,)
+      valid_acc  : np.ndarray (T,)   — Sample_Accuracy / sample_corr_acc
+      mem_ratio  : np.ndarray (T,)   — Sample_Mem_Ratio / sample_mem_ratio
+    or None if the experiment directory is not found.
+    """
+    exp_dir = os.path.join(saveroot, exp_name)
+    if not os.path.isdir(exp_dir):
+        return None
+
+    tb_dir = os.path.join(exp_dir, "tensorboard")
+
+    if os.path.isdir(tb_dir):
+        from scripts.plot_tb_curves import load_tb_scalars
+        d = load_tb_scalars(tb_dir, [TAG_ACC, TAG_MEM])
+        if TAG_ACC not in d:
+            return None
+        steps = np.array(d[TAG_ACC]["steps"])
+        acc   = np.array(d[TAG_ACC]["vals"])
+        mem   = np.array(d[TAG_MEM]["vals"]) if TAG_MEM in d else np.full(len(steps), np.nan)
+        n = min(len(steps), len(mem))
+        return dict(eval_steps=steps[:n], valid_acc=acc[:n], mem_ratio=mem[:n])
+
+    # CSV fallback
+    csv_data = _load_from_csv(exp_dir)
+    if csv_data is None:
+        return None
+    return dict(eval_steps=csv_data["acc_steps"],
+                valid_acc=csv_data["acc_vals"],
+                mem_ratio=csv_data["mem_vals"])
+
+
 def _load_from_csv(exp_dir):
     """Load eval stats from older DiT CSV format.
 
