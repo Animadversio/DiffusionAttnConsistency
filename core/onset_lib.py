@@ -28,8 +28,12 @@ import os
 import numpy as np
 
 # ── default TB tag names ──────────────────────────────────────────────────────
-TAG_ACC = "Eval/Sample_Accuracy"
-TAG_MEM = "Eval/Sample_Mem_Ratio"
+TAG_ACC        = "Eval/Sample_Accuracy"
+TAG_MEM        = "Eval/Sample_Mem_Ratio"
+TAG_PERGROUP   = "Eval/PerGroup_Accuracy"
+TAG_NAN_1E1    = "Eval/NaN_Ratio"          # eps=1e-1 (loose quantization)
+TAG_NAN_1E2    = "Eval/NaN_Ratio_1e2"      # eps=1e-2 (strict) — if logged separately
+TAG_BITGRP_MEM = "Eval/BitGroup_Mem_Ratio"
 
 
 def first_sustained_crossing(steps, vals, threshold, n_consec=5, above=True):
@@ -67,15 +71,19 @@ def load_eval_timeseries(exp_name, saveroot):
     """Load full eval time series for one experiment.
 
     Handles both formats automatically:
-      - TensorBoard (newer GPT / DiT sweep runs)
+      - TensorBoard (newer GPT / DiT sweep runs): loads all available tags
       - mem_eval_stats.csv (older DiT baseline runs)
 
     Returns
     -------
-    dict with keys:
-      eval_steps : np.ndarray (T,)
-      valid_acc  : np.ndarray (T,)   — Sample_Accuracy / sample_corr_acc
-      mem_ratio  : np.ndarray (T,)   — Sample_Mem_Ratio / sample_mem_ratio
+    dict with keys (all np.ndarray of shape (T,)):
+      eval_steps      — training step
+      valid_acc       — Sample_Accuracy / sample_corr_acc
+      mem_ratio       — Sample_Mem_Ratio / sample_mem_ratio
+      pergroup_acc    — PerGroup_Accuracy (NaN if not logged)
+      nan_ratio_1e1   — NaN_Ratio at eps=1e-1 (loose quantization)
+      nan_ratio_1e2   — NaN_Ratio at eps=1e-2 (strict); NaN for TB runs that don't log it
+      bitgroup_mem    — BitGroup_Mem_Ratio (NaN if not logged)
     or None if the experiment directory is not found.
     """
     exp_dir = os.path.join(saveroot, exp_name)
@@ -86,46 +94,116 @@ def load_eval_timeseries(exp_name, saveroot):
 
     if os.path.isdir(tb_dir):
         from scripts.plot_tb_curves import load_tb_scalars
-        d = load_tb_scalars(tb_dir, [TAG_ACC, TAG_MEM])
+        all_tags = [TAG_ACC, TAG_MEM, TAG_PERGROUP, TAG_NAN_1E1, TAG_NAN_1E2, TAG_BITGRP_MEM]
+        d = load_tb_scalars(tb_dir, all_tags)
         if TAG_ACC not in d:
             return None
-        steps = np.array(d[TAG_ACC]["steps"])
-        acc   = np.array(d[TAG_ACC]["vals"])
-        mem   = np.array(d[TAG_MEM]["vals"]) if TAG_MEM in d else np.full(len(steps), np.nan)
-        n = min(len(steps), len(mem))
-        return dict(eval_steps=steps[:n], valid_acc=acc[:n], mem_ratio=mem[:n])
 
-    # CSV fallback
+        # Use ACC steps as reference; align other tags by step value (not position)
+        ref_steps = np.array(d[TAG_ACC]["steps"])
+
+        def _align(tag):
+            """Return values aligned to ref_steps; NaN where step not present."""
+            if tag not in d:
+                return np.full(len(ref_steps), np.nan)
+            t_steps = np.array(d[tag]["steps"])
+            t_vals  = np.array(d[tag]["vals"])
+            if np.array_equal(t_steps, ref_steps):
+                return t_vals          # fast path: already aligned
+            # map step → val via dict lookup
+            step_to_val = dict(zip(t_steps.tolist(), t_vals.tolist()))
+            return np.array([step_to_val.get(s, np.nan) for s in ref_steps])
+
+        return dict(
+            eval_steps    = ref_steps,
+            valid_acc     = _align(TAG_ACC),
+            mem_ratio     = _align(TAG_MEM),
+            pergroup_acc  = _align(TAG_PERGROUP),
+            nan_ratio_1e1 = _align(TAG_NAN_1E1),   # eps=1e-1 (loose)
+            nan_ratio_1e2 = _align(TAG_NAN_1E2),   # eps=1e-2 (strict); NaN if not logged
+            bitgroup_mem  = _align(TAG_BITGRP_MEM),
+        )
+
+    # CSV fallback (older DiT runs)
     csv_data = _load_from_csv(exp_dir)
     if csv_data is None:
         return None
-    return dict(eval_steps=csv_data["acc_steps"],
-                valid_acc=csv_data["acc_vals"],
-                mem_ratio=csv_data["mem_vals"])
+    return dict(
+        eval_steps    = csv_data["acc_steps"],
+        valid_acc     = csv_data["acc_vals"],
+        mem_ratio     = csv_data["mem_vals"],
+        pergroup_acc  = csv_data["pergroup_acc"],
+        nan_ratio_1e1 = csv_data["nan_ratio_1e1"],
+        nan_ratio_1e2 = csv_data["nan_ratio_1e2"],
+        bitgroup_mem  = csv_data["bitgroup_mem"],
+    )
 
 
 def _load_from_csv(exp_dir):
     """Load eval stats from older DiT CSV format.
 
     Older DiT runs have no TensorBoard dir; instead they write:
-      mem_eval_stats.csv  — columns: step, sample_corr_acc, sample_mem_ratio, ...
+      mem_eval_stats.csv  — columns: step, sample_corr_acc, sample_mem_ratio,
+                            pergroup_parity_acc, nan_ratio_eps_1e-1,
+                            bitgroup_mem_ratio, ...
 
-    Returns dict with keys 'acc_steps','acc_vals','mem_steps','mem_vals',
-    or None if the CSV is not found.
+    Returns dict with keys 'acc_steps','acc_vals','mem_vals','pergroup_acc',
+    'nan_ratio','bitgroup_mem', or None if the CSV is not found.
     """
     import pandas as pd
     csv_path = os.path.join(exp_dir, "mem_eval_stats.csv")
     if not os.path.exists(csv_path):
         return None
     df = pd.read_csv(csv_path)
-    if "sample_corr_acc" not in df.columns or "sample_mem_ratio" not in df.columns:
+    if "sample_corr_acc" not in df.columns:
         return None
+
+    def _col(name, alt=None):
+        if name in df.columns:
+            return df[name].to_numpy()
+        if alt and alt in df.columns:
+            return df[alt].to_numpy()
+        return np.full(len(df), np.nan)
+
     return {
-        "acc_steps": df["step"].to_numpy(),
-        "acc_vals":  df["sample_corr_acc"].to_numpy(),
-        "mem_steps": df["step"].to_numpy(),
-        "mem_vals":  df["sample_mem_ratio"].to_numpy(),
+        "acc_steps":    df["step"].to_numpy(),
+        "acc_vals":     _col("sample_corr_acc"),
+        "mem_vals":     _col("sample_mem_ratio"),
+        "pergroup_acc": _col("pergroup_parity_acc"),
+        "nan_ratio_1e1": _col("nan_ratio_eps_1e-1"),
+        "nan_ratio_1e2": _col("nan_ratio_eps_1e-2"),
+        "bitgroup_mem": _col("bitgroup_mem_ratio"),
     }
+
+
+def load_eval_dataframe(exp_name, saveroot):
+    """Load eval time series for one experiment as a pandas DataFrame.
+
+    Each row is one eval step. Includes exp_name column for traceability.
+    Handles both CSV (older DiT runs) and TensorBoard (newer runs).
+
+    Returns
+    -------
+    pd.DataFrame with columns:
+      exp_name, step, valid_acc, mem_ratio, pergroup_acc,
+      nan_ratio_1e1, nan_ratio_1e2, bitgroup_mem
+    or None if the experiment is not found.
+    """
+    import pandas as pd
+    ts = load_eval_timeseries(exp_name, saveroot)
+    if ts is None:
+        return None
+    df = pd.DataFrame({
+        "exp_name":     exp_name,
+        "step":         ts["eval_steps"],
+        "valid_acc":    ts["valid_acc"],
+        "mem_ratio":    ts["mem_ratio"],
+        "pergroup_acc": ts["pergroup_acc"],
+        "nan_ratio_1e1": ts["nan_ratio_1e1"],
+        "nan_ratio_1e2": ts["nan_ratio_1e2"],
+        "bitgroup_mem": ts["bitgroup_mem"],
+    })
+    return df
 
 
 def get_onsets(exp_name, saveroot,
