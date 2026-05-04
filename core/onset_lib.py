@@ -63,10 +63,37 @@ def first_sustained_crossing(steps, vals, threshold, n_consec=5, above=True):
     return np.nan
 
 
+def _load_from_csv(exp_dir):
+    """Load eval stats from older DiT CSV format.
+
+    Older DiT runs have no TensorBoard dir; instead they write:
+      mem_eval_stats.csv  — columns: step, sample_corr_acc, sample_mem_ratio, ...
+
+    Returns dict with keys 'acc_steps','acc_vals','mem_steps','mem_vals',
+    or None if the CSV is not found.
+    """
+    import pandas as pd
+    csv_path = os.path.join(exp_dir, "mem_eval_stats.csv")
+    if not os.path.exists(csv_path):
+        return None
+    df = pd.read_csv(csv_path)
+    if "sample_corr_acc" not in df.columns or "sample_mem_ratio" not in df.columns:
+        return None
+    return {
+        "acc_steps": df["step"].to_numpy(),
+        "acc_vals":  df["sample_corr_acc"].to_numpy(),
+        "mem_steps": df["step"].to_numpy(),
+        "mem_vals":  df["sample_mem_ratio"].to_numpy(),
+    }
+
+
 def get_onsets(exp_name, saveroot,
                acc_thresh=0.9, mem_thresh=0.5, n_consec=5,
                acc_tag=TAG_ACC, mem_tag=TAG_MEM):
-    """Load TensorBoard scalars and return (rule_onset_step, mem_onset_step).
+    """Load eval data and return (rule_onset_step, mem_onset_step).
+
+    Tries TensorBoard first (newer runs); falls back to mem_eval_stats.csv
+    for older DiT runs that predate TensorBoard logging.
 
     Parameters
     ----------
@@ -75,30 +102,37 @@ def get_onsets(exp_name, saveroot,
     acc_thresh: float — accuracy threshold for rule-learning onset (default 0.9)
     mem_thresh: float — mem-ratio threshold for memorization onset (default 0.5)
     n_consec  : int   — consecutive eval points required (default 5)
-    acc_tag   : str   — TensorBoard tag for accuracy
-    mem_tag   : str   — TensorBoard tag for mem ratio
+    acc_tag   : str   — TensorBoard tag for accuracy (ignored for CSV fallback)
+    mem_tag   : str   — TensorBoard tag for mem ratio (ignored for CSV fallback)
 
     Returns
     -------
     (rule_onset, mem_onset) : (float, float)
         Step numbers, or np.nan if a threshold was never sustainedly crossed.
     """
-    from scripts.plot_tb_curves import load_tb_scalars   # lazy import
-
-    tb_dir = os.path.join(saveroot, exp_name, "tensorboard")
-    if not os.path.isdir(tb_dir):
-        return np.nan, np.nan
-
-    d    = load_tb_scalars(tb_dir, [acc_tag, mem_tag])
+    exp_dir = os.path.join(saveroot, exp_name)
+    tb_dir  = os.path.join(exp_dir, "tensorboard")
     rule = np.nan
     mem  = np.nan
 
-    if acc_tag in d:
-        rule = first_sustained_crossing(
-            d[acc_tag]["steps"], d[acc_tag]["vals"], acc_thresh, n_consec)
-    if mem_tag in d:
-        mem = first_sustained_crossing(
-            d[mem_tag]["steps"], d[mem_tag]["vals"], mem_thresh, n_consec)
+    if os.path.isdir(tb_dir):
+        # ── newer run: TensorBoard ────────────────────────────────────────
+        from scripts.plot_tb_curves import load_tb_scalars
+        d = load_tb_scalars(tb_dir, [acc_tag, mem_tag])
+        if acc_tag in d:
+            rule = first_sustained_crossing(
+                d[acc_tag]["steps"], d[acc_tag]["vals"], acc_thresh, n_consec)
+        if mem_tag in d:
+            mem = first_sustained_crossing(
+                d[mem_tag]["steps"], d[mem_tag]["vals"], mem_thresh, n_consec)
+    else:
+        # ── older DiT run: CSV fallback ───────────────────────────────────
+        csv = _load_from_csv(exp_dir)
+        if csv is not None:
+            rule = first_sustained_crossing(
+                csv["acc_steps"], csv["acc_vals"], acc_thresh, n_consec)
+            mem = first_sustained_crossing(
+                csv["mem_steps"], csv["mem_vals"], mem_thresh, n_consec)
 
     return rule, mem
 
