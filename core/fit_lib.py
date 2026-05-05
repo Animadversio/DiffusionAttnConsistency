@@ -104,7 +104,7 @@ def plot_loglog_fit(ax, x, y, x_min=None, x_max=None, n_pts=200,
 
     lbl = label or ""
     if show_slope:
-        lbl += f" $\\propto x^{{{slope:.2f}}}$"
+        lbl += f" $\\propto {{{np.exp(intercept):.2g}}} x^{{{slope:.2f}}}$"
     if show_r2:
         lbl += f" $R^2={r2:.2f}$"
     if n is not None:
