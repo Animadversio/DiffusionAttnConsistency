@@ -7,17 +7,18 @@ and save results as CSV + pickle.
 Onset thresholds tried:
   Rule accuracy : 0.85, 0.90, 0.95
   Mem ratio     : 0.10 (fixed reference)
+                  0.20, 0.35
                   0.50 (heavy memorization)
                   0.10 + stat_mem_frac  (data-adaptive baseline)
+  Novel valid   : novel_valid = valid_acc - mem_ratio
+                  thresholds 0.1, 0.5, 0.9
 
 Output columns (in addition to run parameters):
   rule_onset_acc{85,90,95}   — step of first sustained rule-learning onset
-  mem_onset_mem10            — step when mem_ratio > 0.10 sustained
-  mem_onset_mem50            — step when mem_ratio > 0.50 sustained
+  mem_onset_mem{10,20,35,50} — step when mem_ratio > threshold sustained
   mem_onset_stat             — step when mem_ratio > (0.10 + stat_mem_frac) sustained
-  innov_acc90_mem10          — mem_onset_mem10  - rule_onset_acc90
-  innov_acc90_mem50          — mem_onset_mem50  - rule_onset_acc90
-  innov_acc90_stat           — mem_onset_stat   - rule_onset_acc90
+  innov_acc90_{label}        — mem_onset_{label} - rule_onset_acc90
+  novel_onset_{01,05,09}     — step when (valid_acc - mem_ratio) > {0.1,0.5,0.9} sustained
 
 NaN means the threshold was never sustainedly crossed within the run budget.
 
@@ -37,14 +38,18 @@ import pandas as pd
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from core.run_registry import scan_parity_runs
-from core.onset_lib    import get_onsets
+from core.onset_lib    import load_eval_timeseries, first_sustained_crossing
 
 # ── threshold grids ────────────────────────────────────────────────────────────
-ACC_THRESHOLDS = [0.85, 0.90, 0.95]
+ACC_THRESHOLDS   = [0.85, 0.90, 0.95]
+NOVEL_THRESHOLDS = [0.1, 0.5, 0.9]   # thresholds for novel_valid = valid_acc - mem_ratio
 
 
 def extract_row(run, saveroot, n_consec=5):
     """Compute all onset columns for one run dict.
+
+    Loads the eval timeseries once, then applies first_sustained_crossing
+    for all thresholds (rule, mem, novel_valid).
 
     Returns the run dict extended with onset + innovation columns.
     """
@@ -53,15 +58,36 @@ def extract_row(run, saveroot, n_consec=5):
     stat_thresh   = 0.10 + stat_mem_frac   # adaptive mem threshold
 
     row = dict(run)  # start with all parameter fields
+    row["stat_mem_thresh"] = stat_thresh
+
+    # ── load timeseries once ───────────────────────────────────────────────
+    ts = load_eval_timeseries(exp_name, saveroot)
+    if ts is None:
+        for acc_t in ACC_THRESHOLDS:
+            row[f"rule_onset_acc{int(acc_t*100):02d}"] = np.nan
+        for label in ["mem10", "mem20", "mem35", "mem50", "stat"]:
+            row[f"mem_onset_{label}"] = np.nan
+            row[f"innov_acc90_{label}"] = np.nan
+        for thresh in NOVEL_THRESHOLDS:
+            row[f"novel_onset_{int(thresh*10):02d}"] = np.nan
+        return row
+
+    steps     = ts["eval_steps"]
+    valid_acc = ts["valid_acc"]
+    mem_ratio = ts["mem_ratio"]
+
+    # ── novel_valid = valid_acc - mem_ratio (should be in [0,1] by definition) ─
+    novel_valid  = valid_acc - mem_ratio
+    out_of_range = np.sum((novel_valid < -1e-6) | (novel_valid > 1 + 1e-6))
+    if out_of_range > 0:
+        print(f"  WARNING {exp_name}: novel_valid out of [0,1] at {out_of_range} steps "
+              f"(min={novel_valid.min():.4f}, max={novel_valid.max():.4f})")
 
     # ── rule onset at each acc threshold ──────────────────────────────────
     rule_onsets = {}
     for acc_t in ACC_THRESHOLDS:
-        col = f"rule_onset_acc{int(acc_t*100):02d}"
-        r, _ = get_onsets(exp_name, saveroot,
-                          acc_thresh=acc_t, mem_thresh=0.5,
-                          n_consec=n_consec)
-        row[col] = r
+        r = first_sustained_crossing(steps, valid_acc, acc_t, n_consec)
+        row[f"rule_onset_acc{int(acc_t*100):02d}"] = r
         rule_onsets[acc_t] = r
 
     # ── mem onset at each mem threshold ───────────────────────────────────
@@ -74,25 +100,21 @@ def extract_row(run, saveroot, n_consec=5):
     ]
     mem_onsets = {}
     for label, mem_t in mem_configs:
-        col = f"mem_onset_{label}"
-        _, m = get_onsets(exp_name, saveroot,
-                          acc_thresh=0.9, mem_thresh=mem_t,
-                          n_consec=n_consec)
-        row[col] = m
+        m = first_sustained_crossing(steps, mem_ratio, mem_t, n_consec)
+        row[f"mem_onset_{label}"] = m
         mem_onsets[label] = m
 
-    # ── innovation windows (mem - rule) for primary acc threshold 0.90 ────
+    # ── innovation windows (mem_onset - rule_onset) at acc90 ──────────────
     rule_90 = rule_onsets[0.90]
     for label, _ in mem_configs:
         m = mem_onsets[label]
-        if np.isnan(rule_90) or np.isnan(m):
-            innov = np.nan
-        else:
-            innov = m - rule_90
+        innov = np.nan if (np.isnan(rule_90) or np.isnan(m)) else m - rule_90
         row[f"innov_acc90_{label}"] = innov
 
-    # store the adaptive threshold used so it's auditable
-    row["stat_mem_thresh"] = stat_thresh
+    # ── novel_valid onset at each threshold ───────────────────────────────
+    for thresh in NOVEL_THRESHOLDS:
+        col = f"novel_onset_{int(thresh*10):02d}"
+        row[col] = first_sustained_crossing(steps, novel_valid, thresh, n_consec)
 
     return row
 
@@ -109,6 +131,8 @@ def main():
                         help="Architectures to include (default: DiT GPT)")
     parser.add_argument("--sizes", nargs="+", default=["nano", "mini", "B"],
                         help="Model sizes to include (default: nano mini B)")
+    parser.add_argument("--outname", default="parity_onset_table_v2",
+                        help="Output filename stem (default: parity_onset_table_v2)")
     args = parser.parse_args()
 
     os.makedirs(args.outdir, exist_ok=True)
@@ -147,14 +171,15 @@ def main():
            "mem_onset_mem50", "mem_onset_stat", "stat_mem_thresh"]
         + ["innov_acc90_mem10", "innov_acc90_mem20", "innov_acc90_mem35",
            "innov_acc90_mem50", "innov_acc90_stat"]
+        + [f"novel_onset_{int(t*10):02d}" for t in NOVEL_THRESHOLDS]
     )
     # keep any unexpected extra columns at the end
     extra = [c for c in df.columns if c not in param_cols + onset_cols]
     df = df[param_cols + onset_cols + extra]
 
-    # ── save ───────────────────────────────────────────────────────────────
-    csv_path = os.path.join(args.outdir, "parity_onset_table.csv")
-    pkl_path = os.path.join(args.outdir, "parity_onset_table.pkl")
+    # ── save (new file, don't overwrite old table) ─────────────────────────
+    csv_path = os.path.join(args.outdir, f"{args.outname}.csv")
+    pkl_path = os.path.join(args.outdir, f"{args.outname}.pkl")
     df.to_csv(csv_path, index=False)
     df.to_pickle(pkl_path)
 
@@ -167,6 +192,11 @@ def main():
     for (arch, size), sub in grp:
         reached = sub["rule_onset_acc90"].notna().sum()
         print(f"  {arch}-{size}: {reached}/{len(sub)} runs reached rule onset")
+
+    print("\nNovel valid onset (0.5) reach rate by arch/size:")
+    for (arch, size), sub in grp:
+        reached = sub["novel_onset_05"].notna().sum()
+        print(f"  {arch}-{size}: {reached}/{len(sub)} runs reached novel onset 0.5")
 
     return df
 
