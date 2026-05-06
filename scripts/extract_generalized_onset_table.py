@@ -65,6 +65,7 @@ TASK_TAGS = {
         "col_acc":   None,
         "block_acc": None,
         "mem_ratio": "eval/sample_mem_ratio",
+        "nan_ratio": "eval/nan_ratio_eps_1e-1",   # needed for renormalization
     },
     "rowK": {
         "rule_acc":  "eval/full_valid_ratio",
@@ -234,6 +235,57 @@ def load_metrics(exp_dir, task_type):
     return metrics
 
 
+# ── Metric renormalization ─────────────────────────────────────────────────────
+def _align_vals(steps_src, vals_src, steps_ref):
+    """Align vals_src onto steps_ref via dict lookup; missing steps → NaN."""
+    if steps_src is None or vals_src is None:
+        return None
+    if np.array_equal(steps_src, steps_ref):
+        return vals_src
+    d = dict(zip(steps_src.tolist(), vals_src.tolist()))
+    return np.array([d.get(int(s), np.nan) for s in steps_ref])
+
+
+def normalize_metrics(metrics, task_type):
+    """
+    Renormalize rule_acc and mem_ratio so both are fractions of *all* generated
+    samples (not conditional on valid/non-NaN subsets).
+
+    - parity      : no change — both already use all-samples denominator
+    - exactK      : both are conditional on non-NaN → multiply by (1 - nan_ratio)
+    - all others  : rule_acc already all-samples; mem_ratio is P(mem | rule-valid)
+                    → convert: mem_ratio_norm = mem_ratio × rule_acc
+    """
+    if task_type == "parity":
+        return metrics
+
+    metrics = dict(metrics)   # shallow copy — don't mutate caller's dict
+    steps_rule, vals_rule = metrics.get("rule_acc",  (None, None))
+    steps_mem,  vals_mem  = metrics.get("mem_ratio", (None, None))
+
+    if task_type == "exactK":
+        steps_nan, vals_nan = metrics.get("nan_ratio", (None, None))
+        if steps_rule is not None and steps_nan is not None:
+            nan_aligned = _align_vals(steps_nan, vals_nan, steps_rule)
+            if nan_aligned is not None:
+                non_nan = 1.0 - nan_aligned
+                metrics["rule_acc"] = (steps_rule, vals_rule * non_nan)
+                if vals_mem is not None:
+                    mem_aligned = _align_vals(steps_mem, vals_mem, steps_rule)
+                    if mem_aligned is not None:
+                        metrics["mem_ratio"] = (steps_rule, mem_aligned * non_nan)
+    else:
+        # rowK, rowVarK, globalK, rowOnly, latinSq, sudoku
+        # mem_ratio = P(mem | rule-valid); convert to P(mem ∩ rule-valid) / all
+        if steps_rule is not None and vals_rule is not None and \
+           steps_mem  is not None and vals_mem  is not None:
+            mem_aligned = _align_vals(steps_mem, vals_mem, steps_rule)
+            if mem_aligned is not None:
+                metrics["mem_ratio"] = (steps_rule, mem_aligned * vals_rule)
+
+    return metrics
+
+
 # ── Onset extraction for one run ───────────────────────────────────────────────
 def extract_row(exp_name, exp_dir, args, n_consec=5):
     task_type     = detect_task_type(exp_name, args)
@@ -268,8 +320,9 @@ def extract_row(exp_name, exp_dir, args, n_consec=5):
         "stat_mem_thresh": stat_thresh,
     }
 
-    # ── load TB metrics ──────────────────────────────────────────────────────
+    # ── load and renormalize TB metrics ──────────────────────────────────────
     metrics = load_metrics(exp_dir, task_type)
+    metrics = normalize_metrics(metrics, task_type)
     steps_rule, vals_rule  = metrics.get("rule_acc",  (None, None))
     steps_mem,  vals_mem   = metrics.get("mem_ratio", (None, None))
     _,          vals_row   = metrics.get("row_acc",   (None, None))
