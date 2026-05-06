@@ -188,7 +188,10 @@ def compute_support_size(task_type, args):
                 return int(valid_set_size_global_k(n, K_list))
 
         elif task_type == "rowOnly":
-            return None   # K (row sum) not stored in args.json
+            n = args.get("n_size")
+            if n:
+                import math
+                return int(math.factorial(n) ** n)
 
         elif task_type == "latinSq":
             n = args.get("n_size")
