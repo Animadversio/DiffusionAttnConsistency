@@ -96,33 +96,32 @@ def load_eval_timeseries(exp_name, saveroot):
         from scripts.plot_tb_curves import load_tb_scalars
         all_tags = [TAG_ACC, TAG_MEM, TAG_PERGROUP, TAG_NAN_1E1, TAG_NAN_1E2, TAG_BITGRP_MEM]
         d = load_tb_scalars(tb_dir, all_tags)
-        if TAG_ACC not in d:
-            return None
+        if TAG_ACC in d:
+            # Use ACC steps as reference; align other tags by step value (not position)
+            ref_steps = np.array(d[TAG_ACC]["steps"])
 
-        # Use ACC steps as reference; align other tags by step value (not position)
-        ref_steps = np.array(d[TAG_ACC]["steps"])
+            def _align(tag):
+                """Return values aligned to ref_steps; NaN where step not present."""
+                if tag not in d:
+                    return np.full(len(ref_steps), np.nan)
+                t_steps = np.array(d[tag]["steps"])
+                t_vals  = np.array(d[tag]["vals"])
+                if np.array_equal(t_steps, ref_steps):
+                    return t_vals          # fast path: already aligned
+                # map step → val via dict lookup
+                step_to_val = dict(zip(t_steps.tolist(), t_vals.tolist()))
+                return np.array([step_to_val.get(s, np.nan) for s in ref_steps])
 
-        def _align(tag):
-            """Return values aligned to ref_steps; NaN where step not present."""
-            if tag not in d:
-                return np.full(len(ref_steps), np.nan)
-            t_steps = np.array(d[tag]["steps"])
-            t_vals  = np.array(d[tag]["vals"])
-            if np.array_equal(t_steps, ref_steps):
-                return t_vals          # fast path: already aligned
-            # map step → val via dict lookup
-            step_to_val = dict(zip(t_steps.tolist(), t_vals.tolist()))
-            return np.array([step_to_val.get(s, np.nan) for s in ref_steps])
-
-        return dict(
-            eval_steps    = ref_steps,
-            valid_acc     = _align(TAG_ACC),
-            mem_ratio     = _align(TAG_MEM),
-            pergroup_acc  = _align(TAG_PERGROUP),
-            nan_ratio_1e1 = _align(TAG_NAN_1E1),   # eps=1e-1 (loose)
-            nan_ratio_1e2 = _align(TAG_NAN_1E2),   # eps=1e-2 (strict); NaN if not logged
-            bitgroup_mem  = _align(TAG_BITGRP_MEM),
-        )
+            return dict(
+                eval_steps    = ref_steps,
+                valid_acc     = _align(TAG_ACC),
+                mem_ratio     = _align(TAG_MEM),
+                pergroup_acc  = _align(TAG_PERGROUP),
+                nan_ratio_1e1 = _align(TAG_NAN_1E1),   # eps=1e-1 (loose)
+                nan_ratio_1e2 = _align(TAG_NAN_1E2),   # eps=1e-2 (strict); NaN if not logged
+                bitgroup_mem  = _align(TAG_BITGRP_MEM),
+            )
+        # TB dir exists but empty/no eval tags — fall through to CSV fallback
 
     # CSV fallback (older DiT runs)
     csv_data = _load_from_csv(exp_dir)
