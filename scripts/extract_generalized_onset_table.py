@@ -140,7 +140,7 @@ def detect_task_type(exp_name, args):
 
 # ── Architecture / size / rep parsing ─────────────────────────────────────────
 _ARCH_RE = re.compile(r"^(DiT|GPT)", re.I)
-_SIZE_RE = re.compile(r"^(?:DiT|GPT)_?(nano|mini|S|B)\b", re.I)
+_SIZE_RE = re.compile(r"^(?:DiT|GPT)_(nano|mini|S|B)(?=_|$)", re.I)
 _REP_RE  = re.compile(r"_rep(\d+)$")
 
 def parse_arch_size(exp_name):
@@ -308,8 +308,11 @@ def extract_row(exp_name, exp_dir, args, n_consec=5):
         "N":               N,
         "n_size":          args.get("n_size",       np.nan),
         "D":               args.get("sample_len",   np.nan),
-        "K":               args.get("K", args.get("k_ones", np.nan)),
-        "K_list":          str(args.get("K_list",   "")),
+        "K":               args.get("k_ones", np.nan) if task_type == "exactK"
+                           else args.get("K", np.nan) if task_type == "rowK"
+                           else np.nan,
+        "K_list":          str(args.get("K_list", "")) if task_type in ("rowVarK", "globalK")
+                           else "",
         "G":               args.get("group_size",   np.nan),
         "encoding":        args.get("encoding",     ""),
         "n_layer":         args.get("depth",        np.nan),
