@@ -215,14 +215,23 @@ def plot_transition_heatmap(mat44, ax=None, normalize=True, title=''):
     return ax
 
 
-def plot_transition_heatmap_both(mat44, title=''):
+def plot_transition_heatmap_both(mat44, title='', vertical=False, figsize=(12, 5)):
     """
-    Convenience wrapper: show counts (left) and row-normalized probabilities (right)
-    side by side in a single figure.
+    Convenience wrapper: show counts and row-normalized probabilities
+    side by side (horizontal, default) or stacked (vertical) in a single figure.
+
+    Parameters
+    ----------
+    mat44    : array-like (4, 4) — counts or probabilities
+    title    : string, overall plot title prefix
+    vertical : bool, if True use vertical (2 rows), else horizontal (2 columns)
 
     Returns the figure.
     """
-    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    if vertical:
+        fig, axes = plt.subplots(2, 1, figsize=figsize)
+    else:
+        fig, axes = plt.subplots(1, 2, figsize=figsize)
     plot_transition_heatmap(mat44, ax=axes[0], normalize=False, title=f'{title} — counts')
     plot_transition_heatmap(mat44, ax=axes[1], normalize=True,  title=f'{title} — prob (row-norm)')
     fig.tight_layout()

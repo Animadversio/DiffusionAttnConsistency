@@ -26,6 +26,15 @@ import matplotlib.pyplot as plt
 import matplotlib.lines as mlines
 import torch
 
+matplotlib_rc = {
+    'pdf.fonttype': 42,
+    'ps.fonttype':  42,
+    'axes.spines.top':   False,
+    'axes.spines.right': False,
+    'font.size': 11,
+}
+plt.rcParams.update(matplotlib_rc)
+
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "core"))
 from latin_square_lib import snap_to_integer, onehot_to_int, check_latin_square_batch
 
@@ -286,8 +295,10 @@ def plot_rowcol_analysis(exp_list, saveroot, outpath, epoch=None):
             if any_plotted:
                 ax.legend(fontsize=8)
 
-    plt.savefig(outpath, dpi=130, bbox_inches="tight")
-    print(f"\nFigure saved → {outpath}")
+    base, _ = os.path.splitext(outpath)
+    plt.savefig(base + ".png", dpi=130, bbox_inches="tight")
+    plt.savefig(base + ".pdf", bbox_inches="tight")
+    print(f"\nFigure saved → {base}.png  +  {base}.pdf")
 
 
 # ---------------------------------------------------------------------------

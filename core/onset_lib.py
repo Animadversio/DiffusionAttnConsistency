@@ -25,6 +25,7 @@ Typical usage
 """
 
 import os
+import json
 import numpy as np
 
 # ── default TB tag names ──────────────────────────────────────────────────────
@@ -34,6 +35,25 @@ TAG_PERGROUP   = "Eval/PerGroup_Accuracy"
 TAG_NAN_1E1    = "Eval/NaN_Ratio"          # eps=1e-1 (loose quantization)
 TAG_NAN_1E2    = "Eval/NaN_Ratio_1e2"      # eps=1e-2 (strict) — if logged separately
 TAG_BITGRP_MEM = "Eval/BitGroup_Mem_Ratio"
+
+
+def load_args(exp_name, saveroot):
+    """Load args.json for one experiment run.
+
+    Parameters
+    ----------
+    exp_name : str  — experiment folder name (relative to saveroot)
+    saveroot : str  — root directory containing experiment folders
+
+    Returns
+    -------
+    dict  — parsed args, or None if args.json not found
+    """
+    path = os.path.join(saveroot, exp_name, "args.json")
+    if not os.path.isfile(path):
+        return None
+    with open(path) as f:
+        return json.load(f)
 
 
 def first_sustained_crossing(steps, vals, threshold, n_consec=5, above=True):
